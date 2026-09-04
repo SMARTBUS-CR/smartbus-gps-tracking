@@ -1,0 +1,378 @@
+openapi: 3.1.0
+
+info:
+  title: SmartBus GPS Microservice API
+  version: 0.1.0
+  description: |
+    Contrato JSON:API del microservicio GPS de SMARTBUS GLOBAL.
+
+    Reglas transversales (implementadas en Step 4):
+      * Toda respuesta usa el media type `application/vnd.api+json`.
+      * Exito  -> documento con clave raiz `data`.
+      * Error  -> documento con clave raiz `errors` (array de error objects).
+      * `type` de los recursos en kebab-case plural: `gps-locations`, `trips`, `drivers`.
+      * La autenticacion la resuelve el API Gateway; este servicio NO la implementa.
+
+    Prefijo de URL del microservicio: /gps  (bootstrap/app.php -> apiPrefix).
+
+    Estado de los endpoints:
+      * `GET /gps/ping`       -> implementado (healthcheck, NO es JSON:API).
+      * `POST /gps/locations` -> implementado. Al persistir dispara BusLocationUpdated por WebSocket.
+      * `POST /gps/broadcasting/auth` -> autorizacion de canales privados de Reverb (formato Pusher, NO JSON:API).
+
+    Tiempo real: ver `x-websocket` mas abajo y docs/FLUTTER.md.
+
+servers:
+  - url: http://127.0.0.1:8000
+    description: Desarrollo local (php artisan serve) - rutas /gps/*
+  - url: https://gateway.smartbus.example
+    description: A traves del API Gateway (proxy /{service}/{path} -> reenvia /gps/*)
+
+tags:
+  - name: health
+  - name: gps-locations
+
+# OpenAPI no cubre WebSockets; se documenta el canal aqui como extension.
+x-websocket:
+  transport: Laravel Reverb (protocolo Pusher)
+  url: wss://gateway.smartbus.example/app/{REVERB_APP_KEY}
+  channel:
+    name: private-trip.{tripId}
+    visibility: private
+    authEndpoint: POST /gps/broadcasting/auth
+    authHeaders:
+      X-Auth-User-Id: id del usuario (lo inyecta el API Gateway)
+    authorization: el usuario esta identificado por el Gateway Y el viaje existe y esta en scheduled|in_progress
+  event:
+    name: BusLocationUpdated          # escuchar como ".BusLocationUpdated"
+    payload:
+      $ref: '#/components/schemas/BusLocationUpdatedPayload'
+  reconnection: automatica en el cliente; Reverb no guarda historial (ver docs/FLUTTER.md)
+
+paths:
+
+  /gps/ping:
+    get:
+      tags: [health]
+      summary: Healthcheck del microservicio
+      description: Respuesta JSON simple (no JSON:API), pensada para readiness/liveness probes.
+      responses:
+        '200':
+          description: Servicio operativo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service: { type: string, const: smartbus-gps }
+                  status:  { type: string, const: ok }
+
+  /gps/locations:
+    post:
+      tags: [gps-locations]
+      summary: Registrar una coordenada GPS de un viaje (HU1)
+      description: |
+        Recibe una lectura GPS enviada por la app del conductor (via API Gateway),
+        la valida, la asocia al viaje y la persiste para tracking / calculo de ETA.
+        Al almacenarla se dispara el evento `BusLocationUpdated` (HU2).
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/GpsLocationWriteDocument'
+            examples:
+              nuevaCoordenada:
+                value:
+                  data:
+                    type: gps-locations
+                    attributes:
+                      trip_id: 25
+                      latitude: 10.4631000
+                      longitude: -83.9921000
+                      speed_kmh: 38.5
+                      recorded_at: "2026-09-03T15:00:00Z"
+      responses:
+        '201':
+          description: Coordenada creada
+          headers:
+            Content-Type:
+              schema: { type: string, const: application/vnd.api+json }
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/GpsLocationDocument'
+              examples:
+                creada:
+                  value:
+                    data:
+                      type: gps-locations
+                      id: "1"
+                      attributes:
+                        trip_id: 25
+                        latitude: 10.4631
+                        longitude: -83.9921
+                        speed_kmh: 38.5
+                        recorded_at: "2026-09-03T15:00:00.000000Z"
+                credaConInclude:
+                  summary: Con ?include=trip
+                  value:
+                    data:
+                      type: gps-locations
+                      id: "1"
+                      attributes:
+                        trip_id: 25
+                        latitude: 10.4631
+                        longitude: -83.9921
+                        speed_kmh: 38.5
+                        recorded_at: "2026-09-03T15:00:00.000000Z"
+                      relationships:
+                        trip:
+                          data: { type: trips, id: "25" }
+                    included:
+                      - type: trips
+                        id: "25"
+                        attributes:
+                          route_id: 1
+                          bus_id: 1
+                          driver_id: "ace70080-46fc-40ed-8bd6-5cc166bc145c"
+                          status: in_progress
+                          started_at: "2026-09-03T19:57:25.000000Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+
+  # ----------------------------------------------------------------------------
+  # Media type y content negotiation (Step 4 - NegotiatesJsonApi middleware)
+  # ----------------------------------------------------------------------------
+
+  responses:
+
+    NotAcceptable:
+      description: |
+        El header `Accept` incluye `application/vnd.api+json` pero todas sus
+        apariciones llevan parametros de media type.
+      content:
+        application/vnd.api+json:
+          schema: { $ref: '#/components/schemas/ErrorDocument' }
+          example:
+            errors:
+              - status: "406"
+                title: Not Acceptable
+                detail: The JSON:API media type in the Accept header must be sent without media type parameters.
+
+    UnsupportedMediaType:
+      description: |
+        El header `Content-Type` es `application/vnd.api+json` pero incluye
+        parametros de media type.
+      content:
+        application/vnd.api+json:
+          schema: { $ref: '#/components/schemas/ErrorDocument' }
+          example:
+            errors:
+              - status: "415"
+                title: Unsupported Media Type
+                detail: The JSON:API media type must be sent without media type parameters.
+
+    NotFound:
+      description: El recurso solicitado no existe
+      content:
+        application/vnd.api+json:
+          schema: { $ref: '#/components/schemas/ErrorDocument' }
+          example:
+            errors:
+              - status: "404"
+                title: Not Found
+                detail: The requested resource does not exist.
+
+    ValidationError:
+      description: Fallo de validacion (un error object por cada mensaje)
+      content:
+        application/vnd.api+json:
+          schema: { $ref: '#/components/schemas/ErrorDocument' }
+          example:
+            errors:
+              - status: "422"
+                title: Unprocessable Entity
+                detail: The latitude field is required.
+                source: { pointer: /data/attributes/latitude }
+              - status: "422"
+                title: Unprocessable Entity
+                detail: The longitude field must be between -180 and 180.
+                source: { pointer: /data/attributes/longitude }
+
+    InternalServerError:
+      description: Error inesperado
+      content:
+        application/vnd.api+json:
+          schema: { $ref: '#/components/schemas/ErrorDocument' }
+          example:
+            errors:
+              - status: "500"
+                title: Internal Server Error
+                detail: An unexpected error occurred.
+
+  # ----------------------------------------------------------------------------
+  # Esquemas JSON:API
+  # ----------------------------------------------------------------------------
+
+  schemas:
+
+    ResourceIdentifier:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, examples: [trips] }
+        id:   { type: string, examples: ["25"] }
+
+    Relationship:
+      type: object
+      properties:
+        data:
+          oneOf:
+            - $ref: '#/components/schemas/ResourceIdentifier'
+            - type: array
+              items: { $ref: '#/components/schemas/ResourceIdentifier' }
+            - type: 'null'
+        links:
+          type: object
+          additionalProperties: { type: string }
+
+    ErrorObject:
+      type: object
+      description: Error object segun https://jsonapi.org/format/#error-objects
+      properties:
+        id:     { type: string }
+        status: { type: string, description: Codigo HTTP como string, examples: ["422"] }
+        code:   { type: string }
+        title:  { type: string, examples: [Unprocessable Entity] }
+        detail: { type: string, examples: [The latitude field is required.] }
+        source:
+          type: object
+          properties:
+            pointer:   { type: string, examples: [/data/attributes/latitude] }
+            parameter: { type: string }
+            header:    { type: string }
+        meta:
+          type: object
+          additionalProperties: true
+
+    ErrorDocument:
+      type: object
+      required: [errors]
+      properties:
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/ErrorObject' }
+
+    # --- Recurso gps-locations ---
+
+    # Mensaje WebSocket (data del evento BusLocationUpdated).
+    BusLocationUpdatedPayload:
+      type: object
+      required: [id, trip_id, bus_id, latitude, longitude, recorded_at]
+      properties:
+        id:          { type: integer, format: int64, description: id de la gps_location; usar para descartar lecturas repetidas/viejas }
+        trip_id:     { type: integer, format: int64 }
+        bus_id:      { type: integer, format: int64, description: derivado de trips.bus_id }
+        latitude:    { type: number, format: double }
+        longitude:   { type: number, format: double }
+        speed_kmh:   { type: [number, 'null'], format: double }
+        recorded_at: { type: string, format: date-time, description: ISO-8601 UTC }
+
+    GpsLocationAttributes:
+      type: object
+      properties:
+        trip_id:
+          type: integer
+          format: int64
+          description: FK -> trips.id. Se expone como atributo (lo usa Flutter, Step 11).
+          examples: [25]
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          examples: [10.4631000]
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          examples: [-83.9921000]
+        speed_kmh:
+          type: [number, 'null']
+          format: double
+          minimum: 0
+          examples: [38.5]
+        recorded_at:
+          type: string
+          format: date-time
+          description: >-
+            Entrada: ISO-8601 (cualquier offset, se normaliza a UTC).
+            Salida: ISO-8601 UTC con microsegundos.
+          examples: ["2026-09-03T15:00:00.000000Z"]
+
+    GpsLocationResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type: { type: string, const: gps-locations }
+        id:   { type: string, examples: ["1"] }
+        attributes: { $ref: '#/components/schemas/GpsLocationAttributes' }
+        relationships:
+          type: object
+          properties:
+            trip: { $ref: '#/components/schemas/Relationship' }
+        links:
+          type: object
+          properties:
+            self: { type: string, examples: ["/api/gps/locations/1"] }
+
+    GpsLocationDocument:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/GpsLocationResource' }
+        included:
+          type: array
+          items:
+            type: object
+            required: [type, id]
+        jsonapi:
+          type: object
+          properties:
+            version: { type: string }
+
+    # Cuerpo de entrada para POST /api/gps/locations
+    GpsLocationWriteDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes]
+          properties:
+            type: { type: string, const: gps-locations }
+            attributes:
+              type: object
+              required: [trip_id, latitude, longitude, recorded_at]
+              properties:
+                trip_id:
+                  type: integer
+                  format: int64
+                  description: BIGINT. FK -> trips.id
+                  examples: [25]
+                latitude:   { type: number, format: double, minimum: -90,  maximum: 90 }
+                longitude:  { type: number, format: double, minimum: -180, maximum: 180 }
+                speed_kmh:  { type: [number, 'null'], format: double, minimum: 0 }
+                recorded_at: { type: string, format: date-time }
