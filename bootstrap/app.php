@@ -9,13 +9,19 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 
 /*
-| Prefijo de las rutas API.
+| Prefijo de las rutas API = 'api' (default de Laravel 12).
 |
-| PROVISIONAL: se asume que el API Gateway (patron /{service}/{path}) reenvia la
-| ruta COMPLETA -> este servicio expone /gps/*. Si el Gateway stripea su segmento
-| de servicio, cambiar a ''  (ver docs/GATEWAY.md, punto abierto). Es un one-liner.
+| El API Gateway (base /api, ruta /api/{service}/{path}) consume el segmento
+| {service} para elegir destino y reenvia  /api/{path}  al microservicio:
+|
+|     Flutter  ->  <gateway>/api/gps/locations
+|                        |  proxyTo(request, Services::GPS, 'locations')
+|                        v
+|     GPS      ->  /api/locations
+|
+| Por eso aqui las rutas viven en /api/*  (no /gps/*). Ver docs/GATEWAY.md.
 */
-$apiPrefix = 'gps';
+$apiPrefix = 'api';
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -26,8 +32,8 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     /*
-    | Autorizacion de canales (routes/channels.php) + ruta /gps/broadcasting/auth.
-    | Prefijo "gps" para que el API Gateway la enrute igual que el resto.
+    | Autorizacion de canales (routes/channels.php) + ruta /api/broadcasting/auth
+    | (via Gateway: /api/gps/broadcasting/auth).
     | Middleware propio: solo IdentifyFromGateway (NO el grupo "api": la respuesta
     | de auth de Pusher no es JSON:API y no debe pasar por NegotiatesJsonApi).
     */

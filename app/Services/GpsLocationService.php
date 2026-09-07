@@ -33,6 +33,21 @@ class GpsLocationService
     }
 
     /**
+     * Ultima lectura GPS de un viaje (HU3 - estado inicial del mapa).
+     *
+     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException  si el viaje
+     *         no existe o aun no tiene ninguna lectura -> el controller lo mapea a 404.
+     */
+    public function latestForTrip(int $tripId): GpsLocation
+    {
+        return GpsLocation::query()
+            ->where('trip_id', $tripId)
+            ->orderByDesc('recorded_at')
+            ->orderByDesc('id')
+            ->firstOrFail();
+    }
+
+    /**
      * HU2: transmitir la nueva coordenada por WebSocket (Reverb -> Echo).
      *
      * La transmision es best-effort: si Reverb esta caido o el broadcast falla,

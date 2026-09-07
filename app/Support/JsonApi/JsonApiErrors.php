@@ -37,15 +37,21 @@ final class JsonApiErrors
      */
     public static function fromThrowable(Throwable $e, bool $debug = false): JsonResponse
     {
+        // Laravel convierte ModelNotFoundException en NotFoundHttpException antes de
+        // llegar aqui, arrastrando un mensaje interno ("No query results for model
+        // [App\Models\X]") que NO debe filtrarse al cliente.
+        $isModelNotFound = $e instanceof ModelNotFoundException
+            || $e->getPrevious() instanceof ModelNotFoundException;
+
         return match (true) {
             $e instanceof ValidationException      => self::fromValidation($e),
-            $e instanceof ModelNotFoundException   => self::make(404, 'Not Found', 'The requested resource does not exist.'),
+            $isModelNotFound                       => self::make(404, 'Not Found', 'The requested resource does not exist.'),
             $e instanceof AuthenticationException  => self::make(401, 'Unauthorized', 'Authentication is required.'),
             $e instanceof AuthorizationException   => self::make(403, 'Forbidden', 'This action is not authorized.'),
             $e instanceof HttpExceptionInterface   => self::make(
                 $e->getStatusCode(),
                 self::reason($e->getStatusCode()),
-                $e->getMessage() ?: self::reason($e->getStatusCode()),
+                $e->getStatusCode() >= 500 ? self::reason($e->getStatusCode()) : ($e->getMessage() ?: self::reason($e->getStatusCode())),
             ),
             default => self::make(
                 500,

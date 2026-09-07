@@ -10,8 +10,9 @@ use Illuminate\Http\Response;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
 
 /**
- * POST /gps/locations  (HU1) - recibe una coordenada GPS de la app del conductor
- * (via API Gateway) y la persiste para tracking / ETA.
+ * Endpoints de coordenadas GPS (via API Gateway):
+ *   POST /api/gps/locations             (HU1) recibe una coordenada del conductor.
+ *   GET  /api/gps/trips/{tripId}/location (HU3) ultima posicion conocida del viaje.
  *
  * El controller es delgado: valida (FormRequest) -> delega (Service) -> serializa (Resource).
  */
@@ -28,5 +29,14 @@ class GpsLocationController extends Controller
         return GpsLocationResource::make($location)
             ->response()
             ->setStatusCode(Response::HTTP_CREATED);
+    }
+
+    public function latestForTrip(string $tripId): HttpResponse
+    {
+        abort_unless(ctype_digit($tripId), Response::HTTP_NOT_FOUND);
+
+        $location = $this->service->latestForTrip((int) $tripId);
+
+        return GpsLocationResource::make($location)->response();
     }
 }
