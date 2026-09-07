@@ -5,11 +5,11 @@ namespace App\Data;
 use Carbon\CarbonImmutable;
 
 /**
- * Una lectura GPS ya validada, lista para persistir / transmitir.
+ * A validated GPS reading, ready to be persisted and transmitted.
  *
- * Objeto inmutable que desacopla el transporte (HTTP/JSON:API) de la logica
- * de negocio: el controller construye un GpsFix desde el request y el service
- * solo conoce este tipo, no la forma del request.
+ * Immutable value object that decouples the transport (HTTP / JSON:API) from the
+ * business logic: the controller builds a GpsFix from the request, and the
+ * service only ever sees this type, never the request shape.
  */
 final readonly class GpsFix
 {
@@ -28,7 +28,7 @@ final readonly class GpsFix
      *     longitude: int|float|string,
      *     speed_kmh?: int|float|string|null,
      *     recorded_at: string
-     * } $attributes  Atributos JSON:API ya validados.
+     * } $attributes  JSON:API attributes already validated.
      */
     public static function fromAttributes(array $attributes): self
     {
@@ -42,7 +42,8 @@ final readonly class GpsFix
     }
 
     /**
-     * Forma de fila para gps_locations (sin `location`: la deriva el modelo).
+     * Column values for a `gps_locations` row. `location` is intentionally
+     * absent: the model derives the PostGIS point from latitude/longitude.
      *
      * @return array<string, mixed>
      */

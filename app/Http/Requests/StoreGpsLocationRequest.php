@@ -7,9 +7,9 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * Valida el cuerpo JSON:API de  POST /gps/locations.
+ * Validates the JSON:API request body of POST /api/gps/locations.
  *
- * Forma esperada:
+ * Expected shape:
  *   {
  *     "data": {
  *       "type": "gps-locations",
@@ -23,13 +23,13 @@ use Illuminate\Validation\Rule;
  *     }
  *   }
  *
- * Solo valida FORMA y coherencia basica. Las reglas de negocio (viaje activo,
- * lectura no demasiado antigua, orden temporal...) viven en GpsLocationService.
+ * Only shape and basic sanity are checked here. Business rules (trip active,
+ * reading not too old, chronological order, ...) live in GpsLocationService.
  */
 class StoreGpsLocationRequest extends FormRequest
 {
     /**
-     * La autenticacion/autorizacion la resuelve el API Gateway.
+     * Authentication / authorization is handled by the API Gateway.
      */
     public function authorize(): bool
     {
@@ -55,7 +55,7 @@ class StoreGpsLocationRequest extends FormRequest
     }
 
     /**
-     * Nombres legibles para los mensajes de error (":attribute").
+     * Readable names for the ":attribute" placeholder in error messages.
      *
      * @return array<string, string>
      */
@@ -74,7 +74,7 @@ class StoreGpsLocationRequest extends FormRequest
     }
 
     /**
-     * DTO inmutable con la lectura ya validada.
+     * The validated reading as an immutable DTO.
      */
     public function toGpsFix(): GpsFix
     {

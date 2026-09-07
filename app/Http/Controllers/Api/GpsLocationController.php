@@ -10,11 +10,11 @@ use Illuminate\Http\Response;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
 
 /**
- * Endpoints de coordenadas GPS (via API Gateway):
- *   POST /api/gps/locations             (HU1) recibe una coordenada del conductor.
- *   GET  /api/gps/trips/{tripId}/location (HU3) ultima posicion conocida del viaje.
+ * GPS coordinate endpoints (reached through the API Gateway):
+ *   POST /api/gps/locations              (HU1) receive a coordinate from the driver.
+ *   GET  /api/gps/trips/{tripId}/location (HU3) latest known position of a trip.
  *
- * El controller es delgado: valida (FormRequest) -> delega (Service) -> serializa (Resource).
+ * Thin controller: validate (FormRequest) -> delegate (Service) -> serialize (Resource).
  */
 class GpsLocationController extends Controller
 {
@@ -22,6 +22,9 @@ class GpsLocationController extends Controller
         private readonly GpsLocationService $service,
     ) {}
 
+    /**
+     * HU1 — store one GPS reading and return it as a JSON:API resource (201).
+     */
     public function store(StoreGpsLocationRequest $request): HttpResponse
     {
         $location = $this->service->record($request->toGpsFix());
@@ -31,8 +34,12 @@ class GpsLocationController extends Controller
             ->setStatusCode(Response::HTTP_CREATED);
     }
 
+    /**
+     * HU3 — return the most recent GPS reading of the trip, or 404 if there is none.
+     */
     public function latestForTrip(string $tripId): HttpResponse
     {
+        // Route param is a string; a non-numeric id can never match a trip.
         abort_unless(ctype_digit($tripId), Response::HTTP_NOT_FOUND);
 
         $location = $this->service->latestForTrip((int) $tripId);

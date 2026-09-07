@@ -6,10 +6,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Tabla existente `companies` (NO administrada por este servicio).
- * Solo se usa como lado inverso de relaciones (Driver/Bus/Route belongsTo Company).
+ * Existing `companies` table (NOT managed by this service).
+ * Only used as the inverse side of relationships (Driver/Bus/Route belongsTo Company).
  *
- * @property int    $id
+ * @property int $id
  * @property string $name
  */
 class Company extends Model

@@ -9,13 +9,13 @@ use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 
 /**
- * Se dispara cada vez que se registra una nueva coordenada GPS de un viaje (HU2).
+ * Fired every time a new GPS coordinate of a trip is stored (HU1).
  *
- * Origen  : App\Services\GpsLocationService::record()
- * Destino : canal WebSocket del viaje  ->  Reverb  ->  Laravel Echo (Flutter)
+ * Origin      : App\Services\GpsLocationService::record()
+ * Destination : private WebSocket channel of the trip -> Reverb -> Laravel Echo (Flutter)
  *
- * El payload (broadcastWith) se afina para Flutter en el Step 11.
- * El canal (broadcastOn) y su visibilidad publico/privado se definen en el Step 10.
+ * The constructor extracts plain scalars from the model so the payload is
+ * trivially serializable when the event is queued.
  */
 class BusLocationUpdated implements ShouldBroadcast
 {
@@ -33,12 +33,12 @@ class BusLocationUpdated implements ShouldBroadcast
 
     public ?float $speedKmh;
 
-    /** ISO-8601 UTC, p.ej. "2026-09-03T15:00:00.000000Z" */
+    /** ISO-8601 in UTC, e.g. "2026-09-03T15:00:00.000000Z". */
     public string $recordedAt;
 
     public function __construct(GpsLocation $location)
     {
-        // bus_id no esta en gps_locations: viene del viaje.
+        // bus_id is not a column on gps_locations; it comes from the trip.
         $location->loadMissing('trip');
 
         $this->locationId = (int) $location->id;
@@ -51,8 +51,8 @@ class BusLocationUpdated implements ShouldBroadcast
     }
 
     /**
-     * Canal PRIVADO del viaje. La suscripcion se autoriza en routes/channels.php
-     * via POST /gps/broadcasting/auth.
+     * Private channel of the trip. Subscriptions are authorized in
+     * routes/channels.php via POST /api/gps/broadcasting/auth.
      *
      * @return array<int, PrivateChannel>
      */
@@ -64,7 +64,7 @@ class BusLocationUpdated implements ShouldBroadcast
     }
 
     /**
-     * Nombre con el que el cliente escucha:  .listen('.BusLocationUpdated', ...)
+     * Event name the client listens for: `.listen('.BusLocationUpdated', ...)`.
      */
     public function broadcastAs(): string
     {
@@ -72,7 +72,7 @@ class BusLocationUpdated implements ShouldBroadcast
     }
 
     /**
-     * Datos que recibe Flutter para mover el marcador. (Se afina en Step 11.)
+     * Payload the Flutter client uses to move the bus marker on the map.
      *
      * @return array<string, mixed>
      */

@@ -7,14 +7,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Tabla existente `routes` (NO administrada por este servicio).
+ * Existing `routes` table (NOT managed by this service).
  *
- * OJO: la clase se llama igual que la facade Illuminate\Support\Facades\Route.
- * Dentro de este proyecto siempre importar explicitamente App\Models\Route
- * donde se necesite el modelo.
+ * Note: the class name collides with the Illuminate\Support\Facades\Route
+ * facade. Always import App\Models\Route explicitly where the model is needed.
  *
- * @property int    $id
- * @property int    $company_id
+ * @property int $id
+ * @property int $company_id
  * @property string $code
  * @property string $name
  * @property string $origin

@@ -8,14 +8,15 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Reconstruye el usuario a partir de las cabeceras del API Gateway
- * (config/gateway.php) y lo inyecta como user resolver de la request.
+ * Rebuilds the current user from the headers the API Gateway forwards
+ * (config/gateway.php) and installs it as the request's user resolver.
  *
- * A partir de aqui `$request->user()` / `auth()->user()` devuelven un
- * GatewayUser, o null si el Gateway no mando identidad.
+ * From here on, `$request->user()` / `auth()->user()` return a GatewayUser, or
+ * null when the Gateway sent no identity.
  *
- * Se usa en la ruta de autorizacion de canales (/gps/broadcasting/auth).
- * NO es un sistema de autenticacion: solo traduce lo que el Gateway ya validó.
+ * This is NOT an authentication system: it only translates what the Gateway has
+ * already validated. Used on the channel-authorization route
+ * (/api/gps/broadcasting/auth) and on the whole `api` middleware group.
  */
 class IdentifyFromGateway
 {

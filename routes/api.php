@@ -7,11 +7,11 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 | API Routes - SmartBus GPS Microservice
 |--------------------------------------------------------------------------
-| Prefijo de URL: /api  (config en bootstrap/app.php -> apiPrefix).
-| Via API Gateway: /api/gps/{path}  (el Gateway antepone el segmento gps).
-| Grupo de middleware: "api" + IdentifyFromGateway + NegotiatesJsonApi.
-| La autenticacion la resuelve el API Gateway, NO este microservicio.
-| Todas las respuestas (incluidos errores) siguen el estandar JSON:API.
+| URL prefix: /api  (bootstrap/app.php -> apiPrefix).
+| Via the API Gateway: /api/gps/{path}  (the Gateway prepends the `gps` segment).
+| Middleware group: "api" + IdentifyFromGateway + NegotiatesJsonApi.
+| Authentication is handled by the API Gateway, NOT this microservice.
+| Every response (errors included) follows the JSON:API standard.
 */
 
 Route::get('/ping', fn () => response()->json([
@@ -20,15 +20,15 @@ Route::get('/ping', fn () => response()->json([
 ]))->name('gps.ping');
 
 /*
-| HU1 - Recibir coordenadas GPS.
-| Body JSON:API: { "data": { "type": "gps-locations", "attributes": { ... } } }
+| HU1 - Receive GPS coordinates.
+| JSON:API body: { "data": { "type": "gps-locations", "attributes": { ... } } }
 */
 Route::post('/locations', [GpsLocationController::class, 'store'])
     ->name('gps.locations.store');
 
 /*
-| HU3 - Ultima posicion conocida de un viaje (estado inicial del mapa del pasajero,
-| antes de que llegue el siguiente evento BusLocationUpdated).
+| HU3 - Latest known position of a trip (initial state of the passenger map,
+| before the next BusLocationUpdated event arrives).
 */
 Route::get('/trips/{tripId}/location', [GpsLocationController::class, 'latestForTrip'])
     ->name('gps.trips.location');

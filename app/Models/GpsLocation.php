@@ -6,30 +6,32 @@ use App\Models\Concerns\HasLocationPoint;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
- * Tabla existente `gps_locations` (NO administrada por este servicio).
+ * Existing `gps_locations` table (NOT managed by this service).
  *
- * Columnas (ver docs/DATABASE.md):
+ * Columns (see docs/DATABASE.md):
  *   id           bigint (identity)
  *   trip_id      bigint  -> FK trips.id
  *   latitude     numeric(10,7)
  *   longitude    numeric(10,7)
  *   speed_kmh    numeric(8,2) nullable
- *   recorded_at  timestamp(0)  (se guarda en UTC)
+ *   recorded_at  timestamp(0)  (stored in UTC)
  *   location     geography(Point,4326) nullable
  *   created_at / updated_at
  *
- * `latitude`/`longitude` son la fuente de verdad para mostrar la posicion.
- * `location` es el punto PostGIS derivado, para consultas espaciales (distancia,
- * ST_DWithin, ETA...). Se sincroniza solo via HasLocationPoint: longitud primero.
+ * `latitude`/`longitude` are the source of truth for displaying the position.
+ * `location` is the derived PostGIS point, used for spatial queries (distance,
+ * ST_DWithin, ETA...). It is kept in sync automatically by HasLocationPoint,
+ * which writes longitude first.
  *
- * @property int         $id
- * @property int         $trip_id
- * @property float       $latitude
- * @property float       $longitude
- * @property float|null  $speed_kmh
- * @property \Illuminate\Support\Carbon $recorded_at
+ * @property int $id
+ * @property int $trip_id
+ * @property float $latitude
+ * @property float $longitude
+ * @property float|null $speed_kmh
+ * @property Carbon $recorded_at
  */
 class GpsLocation extends Model
 {
@@ -38,7 +40,8 @@ class GpsLocation extends Model
     protected $table = 'gps_locations';
 
     /**
-     * `location` NO va aqui: lo deriva HasLocationPoint, nunca el request.
+     * `location` is intentionally omitted: HasLocationPoint derives it, never
+     * the request.
      */
     protected $fillable = [
         'trip_id',
@@ -49,8 +52,8 @@ class GpsLocation extends Model
     ];
 
     /**
-     * Evita que el binario EWKB de `location` se filtre al serializar a JSON.
-     * Para exponerlo usar el scope withLocationGeoJson().
+     * Keeps the raw EWKB binary of `location` out of JSON serialization.
+     * Use the withLocationGeoJson() scope to expose it explicitly.
      */
     protected $hidden = [
         'location',
@@ -68,7 +71,7 @@ class GpsLocation extends Model
     }
 
     /**
-     * Coordenada en el orden GeoJSON estandar: [longitud, latitud].
+     * Coordinate in the standard GeoJSON order: [longitude, latitude].
      */
     protected function coordinates(): Attribute
     {

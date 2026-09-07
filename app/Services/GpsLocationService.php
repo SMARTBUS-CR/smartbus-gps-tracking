@@ -5,23 +5,24 @@ namespace App\Services;
 use App\Data\GpsFix;
 use App\Events\BusLocationUpdated;
 use App\Models\GpsLocation;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Throwable;
 
 /**
- * Logica de aplicacion para las lecturas GPS (HU1).
+ * Application logic for GPS readings.
  *
- * Punto unico donde nace una gps_location. Aqui se enchufaran despues:
- *   - reglas de negocio (viaje activo, descartar lecturas muy viejas/desordenadas)
- *   - lo que necesite el microservicio de ETA
- *
- * El controller NO habla con el modelo directamente: pasa por aqui.
+ * The single place where a `gps_locations` row is born. Future business rules
+ * hook in here (trip must be active, discard stale / out-of-order readings, feed
+ * the ETA microservice). Controllers never touch the model directly — they go
+ * through this service.
  */
 class GpsLocationService
 {
     /**
-     * Registra una lectura GPS y devuelve el modelo persistido.
+     * Stores a GPS reading and returns the persisted model (HU1).
      *
-     * `location` (PostGIS) se deriva sola en el modelo (HasLocationPoint).
+     * The PostGIS `location` column is derived by the model itself
+     * (App\Models\Concerns\HasLocationPoint).
      */
     public function record(GpsFix $fix): GpsLocation
     {
@@ -33,10 +34,10 @@ class GpsLocationService
     }
 
     /**
-     * Ultima lectura GPS de un viaje (HU3 - estado inicial del mapa).
+     * Latest GPS reading of a trip (HU3 — initial state of the passenger map).
      *
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException  si el viaje
-     *         no existe o aun no tiene ninguna lectura -> el controller lo mapea a 404.
+     * @throws ModelNotFoundException when the trip
+     *                                does not exist or has no readings yet; the controller maps it to 404.
      */
     public function latestForTrip(int $tripId): GpsLocation
     {
@@ -48,11 +49,11 @@ class GpsLocationService
     }
 
     /**
-     * HU2: transmitir la nueva coordenada por WebSocket (Reverb -> Echo).
+     * Broadcasts the new coordinate over WebSockets (Reverb -> Echo) for HU2.
      *
-     * La transmision es best-effort: si Reverb esta caido o el broadcast falla,
-     * la lectura YA quedo guardada y la ingesta (HU1) no debe romperse.
-     * En produccion, con QUEUE_CONNECTION=redis, esto ademas se reintenta solo.
+     * Best-effort: if Reverb is down or the broadcast fails, the reading is
+     * already stored and ingestion (HU1) must not break. In production, with
+     * QUEUE_CONNECTION=redis, the queued job also retries on its own.
      */
     private function broadcast(GpsLocation $location): void
     {
