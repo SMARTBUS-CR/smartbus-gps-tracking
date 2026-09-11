@@ -3,6 +3,7 @@
 use App\Http\Middleware\IdentifyFromGateway;
 use App\Http\Middleware\NegotiatesJsonApi;
 use App\Support\JsonApi\JsonApiErrors;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -63,6 +64,14 @@ return Application::configure(basePath: dirname(__DIR__))
             IdentifyFromGateway::class,
             NegotiatesJsonApi::class,
         ]);
+    })
+    ->withSchedule(function (Schedule $schedule): void {
+        // Housekeeping for the GPS volume problem — see config/gps.php and
+        // App\Console\Commands\PruneGpsLocations. Ingestion (HU1) always
+        // stores every reading; this only prunes old rows of finished trips.
+        $schedule->command('gps:prune-locations')
+            ->dailyAt('03:15')
+            ->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions) use ($apiPrefix): void {
         // Any error on a service route is serialized as a JSON:API error

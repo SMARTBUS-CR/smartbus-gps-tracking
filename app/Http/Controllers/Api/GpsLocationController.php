@@ -23,11 +23,23 @@ class GpsLocationController extends Controller
     ) {}
 
     /**
-     * HU1 — store one GPS reading and return it as a JSON:API resource (201).
+     * HU1 — receive one GPS reading, always broadcast it live (HU2), and
+     * return:
+     *   - 201 with the JSON:API resource, when it was also persisted.
+     *   - 202 with no `data` (`meta.persisted: false`), when it was below
+     *     the distance/time threshold (config/gps.php) and only broadcast.
+     * Both are success responses from the driver app's point of view — it
+     * never needs to know or care which one happened.
      */
     public function store(StoreGpsLocationRequest $request): HttpResponse
     {
         $location = $this->service->record($request->toGpsFix());
+
+        if ($location === null) {
+            return response()->json([
+                'meta' => ['persisted' => false],
+            ], Response::HTTP_ACCEPTED)->header('Content-Type', 'application/vnd.api+json');
+        }
 
         return GpsLocationResource::make($location)
             ->response()
