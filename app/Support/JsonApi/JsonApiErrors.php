@@ -12,7 +12,7 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 
 /**
- * Construye documentos de error segun el estandar JSON:API.
+ * Builds error documents that follow the JSON:API standard.
  *
  *   {
  *     "errors": [
@@ -25,27 +25,33 @@ use Throwable;
  *     ]
  *   }
  *
- * Se usa desde bootstrap/app.php (->withExceptions) para que NINGUNA respuesta
- * de error del microservicio salga como HTML o como JSON arbitrario de Laravel.
+ * Wired in bootstrap/app.php (->withExceptions) so NO error response of the
+ * microservice ever leaves as HTML or as Laravel's arbitrary JSON.
  */
 final class JsonApiErrors
 {
     public const MEDIA_TYPE = 'application/vnd.api+json';
 
     /**
-     * Convierte cualquier excepcion en una respuesta JSON:API.
+     * Turns any exception into a JSON:API error response.
      */
     public static function fromThrowable(Throwable $e, bool $debug = false): JsonResponse
     {
+        // Laravel converts ModelNotFoundException into NotFoundHttpException before
+        // it reaches here, carrying an internal message ("No query results for
+        // model [App\Models\X]") that must not leak to the client.
+        $isModelNotFound = $e instanceof ModelNotFoundException
+            || $e->getPrevious() instanceof ModelNotFoundException;
+
         return match (true) {
-            $e instanceof ValidationException      => self::fromValidation($e),
-            $e instanceof ModelNotFoundException   => self::make(404, 'Not Found', 'The requested resource does not exist.'),
-            $e instanceof AuthenticationException  => self::make(401, 'Unauthorized', 'Authentication is required.'),
-            $e instanceof AuthorizationException   => self::make(403, 'Forbidden', 'This action is not authorized.'),
-            $e instanceof HttpExceptionInterface   => self::make(
+            $e instanceof ValidationException => self::fromValidation($e),
+            $isModelNotFound => self::make(404, 'Not Found', 'The requested resource does not exist.'),
+            $e instanceof AuthenticationException => self::make(401, 'Unauthorized', 'Authentication is required.'),
+            $e instanceof AuthorizationException => self::make(403, 'Forbidden', 'This action is not authorized.'),
+            $e instanceof HttpExceptionInterface => self::make(
                 $e->getStatusCode(),
                 self::reason($e->getStatusCode()),
-                $e->getMessage() ?: self::reason($e->getStatusCode()),
+                $e->getStatusCode() >= 500 ? self::reason($e->getStatusCode()) : ($e->getMessage() ?: self::reason($e->getStatusCode())),
             ),
             default => self::make(
                 500,
@@ -57,7 +63,7 @@ final class JsonApiErrors
     }
 
     /**
-     * Documento de error a partir de una ValidationException (422).
+     * Error document built from a ValidationException (422).
      */
     public static function fromValidation(ValidationException $e): JsonResponse
     {
@@ -78,7 +84,7 @@ final class JsonApiErrors
     }
 
     /**
-     * Documento de error de un solo objeto.
+     * Single-object error document.
      *
      * @param  array<string, mixed>  $meta
      */
@@ -98,7 +104,7 @@ final class JsonApiErrors
     }
 
     /**
-     * Envuelve la lista de errores y fija el Content-Type JSON:API.
+     * Wraps the list of errors and sets the JSON:API Content-Type.
      *
      * @param  array<int, array<string, mixed>>  $errors
      */
@@ -112,11 +118,11 @@ final class JsonApiErrors
     }
 
     /**
-     * JSON pointer al miembro que falla.
+     * JSON pointer to the failing member.
      *
-     *   "latitude"                     -> /data/attributes/latitude
-     *   "data.attributes.latitude"     -> /data/attributes/latitude
-     *   "data.type"                    -> /data/type
+     *   "latitude"                 -> /data/attributes/latitude
+     *   "data.attributes.latitude" -> /data/attributes/latitude
+     *   "data.type"                -> /data/type
      */
     private static function pointerFor(string $field): string
     {

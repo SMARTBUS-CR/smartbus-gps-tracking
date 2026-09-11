@@ -13,20 +13,26 @@ info:
       * `type` de los recursos en kebab-case plural: `gps-locations`, `trips`, `drivers`.
       * La autenticacion la resuelve el API Gateway; este servicio NO la implementa.
 
-    Prefijo de URL del microservicio: /gps  (bootstrap/app.php -> apiPrefix).
+    URLs (paths de este documento = relativos al API Gateway, con el segmento /gps):
+      * Via Gateway  (Flutter):  <gateway>/api  +  /gps/{path}   ->  ej. /api/gps/locations
+      * Ruta interna del microservicio:  /api/{path}   (apiPrefix='api'; el Gateway quita 'gps')
+    Ver docs/GATEWAY.md.
 
     Estado de los endpoints:
-      * `GET /gps/ping`       -> implementado (healthcheck, NO es JSON:API).
-      * `POST /gps/locations` -> implementado. Al persistir dispara BusLocationUpdated por WebSocket.
-      * `POST /gps/broadcasting/auth` -> autorizacion de canales privados de Reverb (formato Pusher, NO JSON:API).
+      * `GET  /gps/ping`                    -> implementado (healthcheck, NO es JSON:API).
+      * `POST /gps/locations`               -> implementado. Al persistir dispara BusLocationUpdated (WS).
+      * `GET  /gps/trips/{tripId}/location` -> implementado (HU3, ultima posicion conocida).
+      * `POST /gps/broadcasting/auth`       -> autorizacion de canales privados de Reverb (formato Pusher).
 
     Tiempo real: ver `x-websocket` mas abajo y docs/FLUTTER.md.
 
 servers:
-  - url: http://127.0.0.1:8000
-    description: Desarrollo local (php artisan serve) - rutas /gps/*
-  - url: https://gateway.smartbus.example
-    description: A traves del API Gateway (proxy /{service}/{path} -> reenvia /gps/*)
+  - url: https://smartbus-api-gateway.onrender.com/api
+    description: API Gateway (prod). Paths de aqui -> /api/gps/{path}
+  - url: https://smartbus-api-gateway-dev.onrender.com/api
+    description: API Gateway (dev)
+  - url: http://127.0.0.1:8000/api
+    description: Acceso DIRECTO al microservicio (dev). Reemplaza /gps/{path} por /{path}.
 
 tags:
   - name: health
@@ -35,13 +41,14 @@ tags:
 # OpenAPI no cubre WebSockets; se documenta el canal aqui como extension.
 x-websocket:
   transport: Laravel Reverb (protocolo Pusher)
-  url: wss://gateway.smartbus.example/app/{REVERB_APP_KEY}
+  # La conexion WS NO pasa por el Gateway: Reverb se expone en su propio host.
+  url: wss://{reverb-host}/app/{REVERB_APP_KEY}
   channel:
     name: private-trip.{tripId}
     visibility: private
-    authEndpoint: POST /gps/broadcasting/auth
+    authEndpoint: POST /api/gps/broadcasting/auth   # esta SI pasa por el Gateway
     authHeaders:
-      X-Auth-User-Id: id del usuario (lo inyecta el API Gateway)
+      X-User-Id: id del usuario (lo inyecta el API Gateway; el cliente manda Authorization Bearer)
     authorization: el usuario esta identificado por el Gateway Y el viaje existe y esta en scheduled|in_progress
   event:
     name: BusLocationUpdated          # escuchar como ".BusLocationUpdated"
@@ -146,6 +153,52 @@ paths:
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /gps/trips/{tripId}/location:
+    get:
+      tags: [gps-locations]
+      summary: Última posición conocida de un viaje (HU3)
+      description: |
+        Devuelve la última `gps-location` registrada para el viaje (mayor `recorded_at`).
+        La usa la app del pasajero para poblar el mapa al abrirlo, antes de recibir el
+        primer evento `BusLocationUpdated`. Soporta `?include=trip`.
+      parameters:
+        - name: tripId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+          example: 25
+      responses:
+        '200':
+          description: Última coordenada del viaje
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/GpsLocationDocument'
+              example:
+                data:
+                  type: gps-locations
+                  id: "842"
+                  attributes:
+                    trip_id: 25
+                    latitude: 10.4631
+                    longitude: -83.9921
+                    speed_kmh: 38.5
+                    recorded_at: "2026-09-06T18:03:11.000000Z"
+        '404':
+          description: El viaje no existe o aún no tiene ninguna lectura GPS
+          content:
+            application/vnd.api+json:
+              schema: { $ref: '#/components/schemas/ErrorDocument' }
+              example:
+                errors:
+                  - status: "404"
+                    title: Not Found
+                    detail: The requested resource does not exist.
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
         '500':
           $ref: '#/components/responses/InternalServerError'
 

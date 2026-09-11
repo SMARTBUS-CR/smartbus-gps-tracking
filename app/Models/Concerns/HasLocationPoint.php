@@ -7,25 +7,25 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Mantiene sincronizada una columna PostGIS `geography(Point,4326)` a partir de
- * las columnas numericas `latitude` / `longitude` del modelo.
+ * Keeps a PostGIS `geography(Point,4326)` column in sync with the model's
+ * numeric `latitude` / `longitude` columns.
  *
- * Regla de oro PostGIS: el punto es (X, Y) = (LONGITUD, LATITUD), en ese orden.
- * Invertirlos coloca el autobus en el oceano. Este trait centraliza ese orden
- * en un solo lugar para que nunca se equivoque el resto del codigo.
+ * PostGIS golden rule: a point is (X, Y) = (LONGITUDE, LATITUDE), in that order.
+ * Swapping them puts the bus in the ocean. This trait keeps that order in one
+ * place so the rest of the code never has to get it right.
  *
- * NO crea la columna: solo escribe/lee la que ya existe en la BD.
+ * It does NOT create the column: it only reads/writes the one already in the DB.
  *
- * Requisitos del modelo que lo use:
- *   - columnas `latitude` (numeric) y `longitude` (numeric)
- *   - columna `location` geography(Point,4326)
+ * Requirements of the model using it:
+ *   - `latitude` (numeric) and `longitude` (numeric) columns
+ *   - `location` geography(Point,4326) column
  *
  * @mixin Model
  */
 trait HasLocationPoint
 {
     /**
-     * Nombre de la columna geografica. Sobrescribible en el modelo si hiciera falta.
+     * Name of the geography column. Override in the model if needed.
      */
     protected function locationColumn(): string
     {
@@ -33,7 +33,7 @@ trait HasLocationPoint
     }
 
     /**
-     * Al guardar, deriva `location` de latitude/longitude.
+     * On save, derive `location` from latitude/longitude.
      */
     public static function bootHasLocationPoint(): void
     {
@@ -44,7 +44,7 @@ trait HasLocationPoint
     }
 
     /**
-     * Construye la expresion SQL del punto (longitud primero, latitud despues).
+     * Builds the SQL expression for the point (longitude first, latitude second).
      */
     public function syncLocationPoint(): void
     {
@@ -57,14 +57,14 @@ trait HasLocationPoint
 
         $this->setAttribute($this->locationColumn(), DB::raw(\sprintf(
             'ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography',
-            self::floatLiteral($lng),  // X = longitud
-            self::floatLiteral($lat),  // Y = latitud
+            self::floatLiteral($lng),  // X = longitude
+            self::floatLiteral($lat),  // Y = latitude
         )));
     }
 
     /**
-     * Convierte a literal numerico seguro (sin locale, sin inyeccion): un float
-     * siempre se formatea como digitos + punto decimal.
+     * Formats a value as a safe numeric literal (locale-independent, no injection):
+     * a float always renders as digits + decimal point.
      */
     protected static function floatLiteral(mixed $value): string
     {
@@ -72,7 +72,7 @@ trait HasLocationPoint
     }
 
     /**
-     * Scope: agrega `location` como GeoJSON string a los resultados.
+     * Scope: adds `location` as a GeoJSON string to the results.
      *
      *   GpsLocation::withLocationGeoJson()->find(1)->location_geojson
      *   // {"type":"Point","coordinates":[-78.4678,-0.1807]}   (lng, lat)

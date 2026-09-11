@@ -19,7 +19,7 @@ BusLocationUpdated::dispatch($location);
 
 Flujo completo:
 ```
-POST /gps/locations
+POST /api/gps/locations   (interna: /api/locations)
   → StoreGpsLocationRequest (valida)
   → GpsLocationService::record()
       → GpsLocation::create()            (+ location PostGIS via HasLocationPoint)
@@ -60,7 +60,7 @@ garantizada sin depender de un worker, cambiar a `ShouldBroadcastNow`.
 ### Best-effort (no rompe HU1)
 `GpsLocationService::broadcast()` envuelve el `dispatch()` en `try/catch + report()`.
 Si Reverb está caído (o el broadcast falla), la `gps_location` **ya quedó guardada**
-y el `POST /gps/locations` devuelve `201` igual. La transmisión es un extra, no un
+y el `POST /api/gps/locations` devuelve `201` igual. La transmisión es un extra, no un
 requisito de la ingesta. Verificado: con Reverb apagado, el POST sigue dando `201`.
 
 ### Verificado en Step 9

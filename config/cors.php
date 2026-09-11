@@ -16,19 +16,20 @@ return [
     */
 
     /*
-    | Rutas cubiertas por CORS:
-    |  - gps/*            -> API del microservicio
-    |  - broadcasting/auth -> autorizacion de canales privados de Reverb
+    | Paths covered by CORS. Internally every route of this service lives under
+    | /api/* (see bootstrap/app.php -> apiPrefix), which also covers
+    | /api/broadcasting/auth.
     |
-    | Nota: Flutter NO es un navegador, no le aplica CORS. Esto es para un
-    | eventual cliente web (panel, pasajero web). El handshake WebSocket de
-    | Reverb tampoco pasa por CORS (lo controla reverb.apps.*.allowed_origins).
+    | Note: Flutter is not a browser, so CORS does not apply to it. This is for a
+    | possible web client (admin panel, web passenger). Reverb's WebSocket
+    | handshake does not go through CORS either (it is controlled by
+    | reverb.apps.*.allowed_origins).
     */
-    'paths' => ['gps/*', 'broadcasting/auth'],
+    'paths' => ['api/*'],
 
     'allowed_methods' => ['*'],
 
-    // TODO: en produccion restringir al/los dominio(s) del cliente web.
+    // TODO: in production, restrict to the web client's domain(s).
     'allowed_origins' => ['*'],
 
     'allowed_origins_patterns' => [],

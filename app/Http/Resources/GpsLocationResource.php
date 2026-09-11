@@ -5,12 +5,12 @@ namespace App\Http\Resources;
 use App\Http\Resources\JsonApi\JsonApiResource;
 
 /**
- * Recurso JSON:API para `gps_locations`.
+ * JSON:API resource for `gps_locations`.
  *
- * type  -> "gps-locations"  (lo deriva la clase base en kebab-case plural)
- * id    -> gps_locations.id
+ * type -> "gps-locations" (the base class derives it as kebab-case plural)
+ * id   -> gps_locations.id
  *
- * Respuesta:
+ * Response:
  *   {
  *     "data": {
  *       "type": "gps-locations",
@@ -25,15 +25,15 @@ use App\Http\Resources\JsonApi\JsonApiResource;
  *     }
  *   }
  *
- * Con  ?include=trip  se agrega el viaje completo en `included`.
+ * With `?include=trip` the full trip is embedded under `included`.
  */
 class GpsLocationResource extends JsonApiResource
 {
     /**
-     * Se listan por nombre: el motor nativo lee $this->resource->{campo}.
+     * Listed by name: the native resource engine reads $this->resource->{name}.
      *
-     * `trip_id` se expone como atributo (lo necesita Flutter para el marcador,
-     * ver Step 11) ademas de la relacion `trip` de abajo.
+     * `trip_id` is exposed as an attribute (Flutter needs it for the marker) in
+     * addition to the `trip` relationship below.
      */
     public $attributes = [
         'trip_id',
@@ -44,8 +44,8 @@ class GpsLocationResource extends JsonApiResource
     ];
 
     /**
-     * Relacion opcional: solo se materializa con ?include=trip,
-     * y se serializa con TripResource (no con el fallback generico).
+     * Optional relationship: only materialized with `?include=trip`, and
+     * serialized with TripResource rather than the generic fallback.
      */
     public $relationships = [
         'trip' => TripResource::class,

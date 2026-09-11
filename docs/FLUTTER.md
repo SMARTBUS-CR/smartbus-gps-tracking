@@ -51,11 +51,11 @@ final echo = Echo<PusherChannelsFlutter, PusherChannel>(
   broadcaster: EchoBroadcasterType.Reverb,
   options: EchoOptions(
     key: const String.fromEnvironment('REVERB_APP_KEY'), // el KEY no es secreto
-    host: 'gateway.smartbus.example',                    // host público de Reverb
+    host: 'smartbus-gps-ws.onrender.com',   // host PROPIO de Reverb (NO el Gateway)
     port: 443,
     forceTLS: true,
-    // La auth del canal privado pasa por el API Gateway -> microservicio GPS:
-    authEndpoint: 'https://gateway.smartbus.example/gps/broadcasting/auth',
+    // El WebSocket va directo a Reverb; solo la auth del canal privado pasa por el Gateway:
+    authEndpoint: 'https://smartbus-api-gateway.onrender.com/api/gps/broadcasting/auth',
     auth: EchoAuth(headers: {
       'Authorization': 'Bearer $userToken', // lo valida el Gateway, no el GPS service
       'Accept': 'application/json',
@@ -64,8 +64,11 @@ final echo = Echo<PusherChannelsFlutter, PusherChannel>(
 );
 ```
 
-> Los valores `key / host / port / scheme` = las variables `REVERB_*` del backend.
-> `authEndpoint` = `<gateway>/gps/broadcasting/auth` (con prefijo `gps`, igual que el resto).
+> `key / port / scheme` = las variables `REVERB_*` del backend.
+> `host` = el host donde corre `php artisan reverb:start` (su propio servicio en
+> Render), **no** el Gateway: el proxy HTTP del Gateway no hace el upgrade a WebSocket.
+> `authEndpoint` = `<gateway>/api/gps/broadcasting/auth` (esa sí pasa por el Gateway).
+> Ver [GATEWAY.md §4](GATEWAY.md).
 
 ## 3. Suscribirse a un viaje
 
@@ -118,38 +121,41 @@ pusher.onConnectionStateChange = (current, previous) {
 };
 ```
 
-## 5. Estado inicial del mapa — GAP conocido para HU3
+## 5. Estado inicial del mapa
 
 Cuando el pasajero abre el mapa **a mitad de viaje**, necesita la posición actual
-*antes* del siguiente `BusLocationUpdated`. Hoy **no hay** endpoint REST para eso.
-
-Cuando se implemente HU3 habrá que añadir al microservicio GPS algo como:
+*antes* del siguiente `BusLocationUpdated`:
 
 ```
-GET /gps/trips/{tripId}/location   -> última gps-location del viaje (JSON:API)
+GET /api/gps/trips/{tripId}/location
+  → 200  { "data": { "type": "gps-locations", "id": "…",
+                     "attributes": { trip_id, latitude, longitude, speed_kmh, recorded_at } } }
+  → 404  si el viaje no existe o aún no tiene lecturas
 ```
 
-Mientras no exista, el mapa solo se puebla cuando llega el primer evento.
-(No se implementa ahora: está fuera del alcance de esta etapa de preparación.)
+Respuesta JSON:API, mismo `GpsLocationResource` que el resto (soporta `?include=trip`).
+Modelo Dart: el mismo `BusLocation.fromJson` de §1 (el `data.attributes` tiene las
+mismas claves que el payload del evento, sin `id` dentro de attributes → usar `data.id`).
 
-## 6. Flujo completo HU3 (cuando se implemente)
+## 6. Flujo completo HU3
 
 ```
 abrir mapa del viaje 25
-  → GET /gps/trips/25/location        (posición actual)   ← pendiente
-  → echo.private('trip.25').listen('.BusLocationUpdated') (updates)
-  → cada evento: si recorded_at > actual, mover marcador
+  → GET  /api/gps/trips/25/location                        (posición actual)
+  → echo.private('trip.25').listen('.BusLocationUpdated')  (updates)
+  → cada evento: si recorded_at > actual, mover marcador (sin recargar)
   → al reconectar: repetir el GET
   → salir de la pantalla: echo.leave('trip.25')
 ```
 
-## 7. Verificado en Step 11 (end-to-end real)
+## 7. Verificado end-to-end (real)
 
 Suscriptor WebSocket (protocolo Pusher, Node) → `private-trip.1`:
 1. conecta a Reverb, obtiene `socket_id`
-2. `POST /gps/broadcasting/auth` con `X-Auth-User-Id` → `200` + firma
+2. `POST /api/gps/broadcasting/auth` con `X-User-Id` → `200` + firma
 3. `pusher:subscribe` → `subscription_succeeded`
-4. `POST /gps/locations` (coordenada real)
+4. `POST /api/gps/locations` (coordenada real)
 5. **recibe** `BusLocationUpdated` en `private-trip.1` con el payload exacto de arriba
 
-Fila de prueba borrada. BD de operaciones intacta (ids 1,2,3).
+`GET /api/gps/trips/{id}/location` → devuelve la última lectura; `404` limpio si no hay.
+Filas de prueba borradas. BD de operaciones intacta (ids 1,2,3).

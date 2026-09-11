@@ -4,7 +4,7 @@ Microservicio de **rastreo GPS** de la plataforma SMARTBUS GLOBAL (transporte p�
 basado en microservicios). Recibe las coordenadas que envía la app del conductor y las
 retransmite en tiempo real a los pasajeros por WebSocket.
 
-- **Laravel** 12 · **PHP** 8.2
+- **Laravel** 12 · **PHP** 8.2 – 8.5
 - **PostgreSQL** + **PostGIS** (base de datos de operaciones **compartida**)
 - **Laravel Reverb** (WebSockets) · **Laravel Echo** (cliente, en Flutter)
 - Respuestas **JSON:API** (soporte nativo de Laravel 12)
@@ -20,7 +20,7 @@ retransmite en tiempo real a los pasajeros por WebSocket.
 
 | Herramienta | Versión | Notas |
 |---|---|---|
-| **PHP** | 8.2+ | En Windows suele venir con **XAMPP** (`C:\xampp\php`). Añade `php` al `PATH`. |
+| **PHP** | 8.2 – 8.5 | Probado en 8.2 (XAMPP) y 8.5 (build oficial de Windows / WinGet). Añade `php` al `PATH`. |
 | **Composer** | 2.x | https://getcomposer.org |
 | **Git** | cualquiera | |
 | Node.js | 18+ | **Opcional.** Solo para el script de verificación WebSocket. El servicio no lo necesita. |
@@ -30,8 +30,8 @@ operaciones es **remota y compartida** (solo necesitas las credenciales).
 
 ### 2. Extensiones de PHP
 
-El servicio necesita estas extensiones activas. En XAMPP las DLLs ya vienen incluidas,
-solo hay que **descomentarlas** en `php.ini` (`C:\xampp\php\php.ini`):
+El servicio necesita estas 4 extensiones activas (las DLLs vienen con PHP en Windows;
+hay que **descomentarlas** en el `php.ini` — `php --ini` te dice cuál se está cargando):
 
 ```ini
 extension=pdo_pgsql     ; conexión a PostgreSQL
@@ -40,19 +40,25 @@ extension=intl          ; formateo de números/fechas
 extension=sockets       ; servidor Reverb (WebSockets)
 ```
 
+| Instalación | `php.ini` típico |
+|---|---|
+| XAMPP | `C:\xampp\php\php.ini` |
+| WinGet (`PHP.PHP.8.5`) | `%LOCALAPPDATA%\Microsoft\WinGet\Packages\PHP.PHP.8.5_*\php.ini` |
+
 Las demás que usa Laravel (`mbstring`, `openssl`, `curl`, `fileinfo`, `tokenizer`,
-`ctype`, `json`, `pdo`, `xml`) vienen activas por defecto en XAMPP.
+`ctype`, `json`, `pdo`, `xml`) vienen activas por defecto.
 
 ### 3. Verificar
 
 ```bash
-php -v                                  # 8.2 o superior
+php -v                                  # entre 8.2 y 8.5
 composer -V                             # 2.x
 php -m | findstr "pdo_pgsql pgsql intl sockets"   # deben aparecer las 4
 ```
 
 Si `php -m` no muestra alguna, revisa que editaste el `php.ini` correcto
-(`php --ini` te dice cuál está cargando) y reinicia la terminal.
+(`php --ini`) y reinicia la terminal. Si tienes **varios PHP** instalados, confirma
+cuál está primero en el `PATH` (`Get-Command php -All`).
 
 Luego seguir con **[Puesta en marcha](#puesta-en-marcha)**.
 
@@ -121,19 +127,22 @@ php artisan reverb:start --debug   # WebSocket  -> ws://127.0.0.1:8080
 
 ## API
 
-Prefijo de URL: **`/gps`** (provisional, según cómo enrute el Gateway — ver [docs/GATEWAY.md](docs/GATEWAY.md)).
-Contrato completo: [docs/openapi.yaml](docs/openapi.yaml).
+- **Vía API Gateway** (lo que llama Flutter): `https://…/api/gps/{path}`
+- **Ruta interna del microservicio**: `/api/{path}` (`apiPrefix = 'api'`; el Gateway consume el segmento `gps`)
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET`  | `/gps/ping` | Healthcheck |
-| `POST` | `/gps/locations` | Registrar una coordenada GPS (HU1) |
-| `POST` | `/gps/broadcasting/auth` | Autorización del canal privado de Reverb |
-| `GET`  | `/up` | Healthcheck interno de Laravel (no vía Gateway) |
+Contrato completo: [docs/openapi.yaml](docs/openapi.yaml) · [docs/GATEWAY.md](docs/GATEWAY.md).
+
+| Método | Vía Gateway | Interna | Descripción |
+|---|---|---|---|
+| `GET`  | `/api/gps/ping` | `/api/ping` | Healthcheck |
+| `POST` | `/api/gps/locations` | `/api/locations` | Registrar una coordenada GPS (HU1) |
+| `GET`  | `/api/gps/trips/{tripId}/location` | `/api/trips/{tripId}/location` | Última posición conocida del viaje (HU3) |
+| `POST` | `/api/gps/broadcasting/auth` | `/api/broadcasting/auth` | Autorización del canal privado de Reverb |
+| `GET`  | — | `/up` | Healthcheck interno de Laravel (no vía Gateway) |
 
 Todas las respuestas y errores siguen **JSON:API** (`application/vnd.api+json`).
 
-**Ejemplo — `POST /gps/locations`:**
+**Ejemplo — `POST /api/gps/locations`:**
 ```json
 {
   "data": {
@@ -156,7 +165,7 @@ Todas las respuestas y errores siguen **JSON:API** (`application/vnd.api+json`).
 - **Evento:** `BusLocationUpdated` — se dispara al guardar cada coordenada ([docs/EVENTS.md](docs/EVENTS.md)).
 - **Canal:** `private-trip.{tripId}` — privado ([docs/CHANNELS.md](docs/CHANNELS.md)).
 - **Cliente Flutter:** `echo.private('trip.$id').listen('.BusLocationUpdated', ...)` ([docs/FLUTTER.md](docs/FLUTTER.md)).
-- El broadcast es **best-effort**: si Reverb está caído, la coordenada se guarda igual y `POST /gps/locations` devuelve `201`.
+- El broadcast es **best-effort**: si Reverb está caído, la coordenada se guarda igual y `POST /api/gps/locations` devuelve `201`.
 
 ---
 
@@ -209,9 +218,12 @@ docs/                                    ← documentación de arquitectura
 
 ## User Stories (pendientes de implementar)
 
-- **HU1** — Recibir coordenadas GPS · estructura lista en `POST /gps/locations`
-- **HU2** — Transmitir por WebSocket · evento + canal listos, flujo verificado
-- **HU3** — Mapa del pasajero en tiempo real · falta `GET /gps/trips/{tripId}/location` (posición inicial)
+- **HU1** — Recibir coordenadas GPS · `POST /api/gps/locations` funcional; falta endurecer reglas de negocio
+- **HU2** — Transmitir por WebSocket · evento + canal + auth listos, flujo verificado end-to-end
+- **HU3** — Mapa del pasajero en tiempo real · `GET /api/gps/trips/{tripId}/location` implementado; el resto es cliente Flutter
+
+Todas las **rutas HTTP** que necesitan las 3 HU están implementadas. Falta la lógica
+de negocio de cada HU y sus tests.
 
 Los tests de las HU se implementan junto con cada historia (`phpunit.xml` aún apunta a
 sqlite `:memory:` — definir la estrategia de BD de test).

@@ -7,25 +7,22 @@ use Illuminate\Http\Resources\JsonApi\JsonApiResource as BaseJsonApiResource;
 use Illuminate\Support\Str;
 
 /**
- * Clase base para TODOS los recursos JSON:API del microservicio GPS.
+ * Base class for every JSON:API resource of the GPS microservice.
  *
- * Extiende la implementacion nativa de Laravel 12
- * (Illuminate\Http\Resources\JsonApi\JsonApiResource) y solo centraliza
- * dos convenciones del equipo:
+ * Extends Laravel 12's native JSON:API resource
+ * (Illuminate\Http\Resources\JsonApi\JsonApiResource) and only centralizes one
+ * team convention: the resource `type` is serialized as kebab-case plural
+ * ("gps-locations", "trips") instead of Laravel's default "GpsLocations".
  *
- *  1. El "type" se serializa en kebab-case plural  ->  "gps-locations", "trips".
- *     (Laravel por defecto lo generaria como "GpsLocations".)
- *  2. Todos los recursos comparten la misma version JSON:API.
- *
- * No agrega logica de negocio: sigue siendo 100% el motor nativo de Laravel.
+ * It adds no business logic — the serialization stays 100% the native engine.
  */
 abstract class JsonApiResource extends BaseJsonApiResource
 {
     /**
-     * "type" del resource object.
+     * The `type` of the resource object.
      *
-     * Deriva del nombre de la clase: GpsLocationResource -> "gps-locations".
-     * Sobrescribe este metodo en un resource concreto si necesitas un type distinto.
+     * Derived from the class name: GpsLocationResource -> "gps-locations".
+     * Override this in a concrete resource if it needs a different type.
      */
     public function toType(Request $request): string
     {

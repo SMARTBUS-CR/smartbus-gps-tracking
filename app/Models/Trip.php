@@ -7,22 +7,22 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Tabla existente `trips` (NO administrada por este servicio).
+ * Existing `trips` table (NOT managed by this service).
  *
- * Columnas (ver docs/DATABASE.md):
+ * Columns (see docs/DATABASE.md):
  *   id            bigint (identity)
  *   route_id      bigint  -> FK routes.id
  *   bus_id        bigint  -> FK buses.id
- *   driver_id     uuid    -> FK drivers.id   (OJO: uuid, no bigint)
+ *   driver_id     uuid    -> FK drivers.id   (note: uuid, not bigint)
  *   status        varchar(20)  default 'scheduled'
  *   started_at / completed_at   timestamp(0) nullable
  *   created_at / updated_at
  *
- * @property int         $id
- * @property int         $route_id
- * @property int         $bus_id
- * @property string      $driver_id
- * @property string      $status
+ * @property int $id
+ * @property int $route_id
+ * @property int $bus_id
+ * @property string $driver_id
+ * @property string $status
  */
 class Trip extends Model
 {
@@ -64,7 +64,7 @@ class Trip extends Model
     }
 
     /**
-     * FK uuid: Eloquent usa el keyType del modelo Driver, no hay que configurar nada extra aqui.
+     * UUID FK: Eloquent uses the Driver model's keyType, nothing extra to configure here.
      *
      * @return BelongsTo<Driver, $this>
      */

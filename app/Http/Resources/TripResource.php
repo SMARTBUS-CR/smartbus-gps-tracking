@@ -5,11 +5,11 @@ namespace App\Http\Resources;
 use App\Http\Resources\JsonApi\JsonApiResource;
 
 /**
- * Recurso JSON:API para `trips`.
+ * JSON:API resource for `trips`.
  *
- * type -> "trips". Se usa sobre todo como recurso incluido
- * (GET /gps/locations?include=trip) para el mapa del pasajero.
- * Solo expone lo que el cliente necesita, no toda la fila.
+ * type -> "trips". Used mostly as an included resource
+ * (GET /api/gps/locations?include=trip) for the passenger map. Only exposes
+ * what the client needs, not the whole row.
  */
 class TripResource extends JsonApiResource
 {
@@ -22,6 +22,6 @@ class TripResource extends JsonApiResource
     ];
 
     public $relationships = [
-        // 'route', 'bus', 'driver'  -> se abren cuando alguna HU los pida
+        // 'route', 'bus', 'driver' -> add these when a user story needs them.
     ];
 }

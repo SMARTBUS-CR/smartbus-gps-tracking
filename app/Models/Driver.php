@@ -5,23 +5,26 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-// NO se importa User: la tabla `users` no vive en esta BD (microservicio de Auth).
+
+// User is intentionally not imported: the `users` table does not live in this DB
+// (it belongs to the Auth microservice).
 
 /**
- * Tabla existente `drivers` (NO administrada por este servicio).
+ * Existing `drivers` table (NOT managed by this service).
  *
- * Columnas (ver docs/DATABASE.md):
- *   id          uuid    (PK, sin autoincrement, sin default en BD)
- *   user_id     bigint  UNIQUE  -> id opaco del microservicio de Auth (NO hay tabla users
- *                                 en esta BD, NO hay FK). Se expone tal cual como atributo.
+ * Columns (see docs/DATABASE.md):
+ *   id          uuid    (PK, no autoincrement, no DB default)
+ *   user_id     bigint  UNIQUE  -> opaque id from the Auth microservice (there is
+ *                                 no `users` table and no FK here). Exposed as-is
+ *                                 as a plain attribute.
  *   company_id  bigint  -> FK companies.id
  *   license     varchar(30)
  *   status      varchar(20)  default 'active'
  *   created_at / updated_at
  *
  * @property string $id
- * @property int    $user_id
- * @property int    $company_id
+ * @property int $user_id
+ * @property int $company_id
  * @property string $license
  * @property string $status
  */
@@ -30,7 +33,7 @@ class Driver extends Model
     protected $table = 'drivers';
 
     /**
-     * La PK es UUID (string), no un autoincremental.
+     * The PK is a UUID (string), not an autoincrement.
      */
     public $incrementing = false;
 
@@ -53,19 +56,18 @@ class Driver extends Model
     }
 
     /*
-     * NOTA: este microservicio NO crea drivers (los administra otro equipo).
-     * Si en el futuro hiciera falta generar el UUID al insertar, añadir:
+     * NOTE: this microservice does NOT create drivers (another team owns them).
+     * If generating the UUID on insert is ever needed, add:
      *
      *   use Illuminate\Database\Eloquent\Concerns\HasUuids;
      *   use HasUuids;
      *
-     * verificando antes que la version de UUID coincida con la que usa el equipo de BD.
-     */
-
-    /*
-     * NO existe relacion user(): la tabla `users` esta en la BD del microservicio de Auth.
-     * `user_id` se expone como atributo entero y quien lo necesite (Gateway / frontend /
-     * microservicio de Auth) resuelve los datos del usuario.
+     * after checking the UUID version matches the one the DB team uses.
+     *
+     * There is deliberately no user() relationship: the `users` table lives in
+     * the Auth microservice's DB. `user_id` is exposed as an integer attribute
+     * and whoever needs the user data (Gateway / frontend / Auth service)
+     * resolves it.
      */
 
     /**

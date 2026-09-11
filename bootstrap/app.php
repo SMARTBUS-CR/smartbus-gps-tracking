@@ -3,19 +3,26 @@
 use App\Http\Middleware\IdentifyFromGateway;
 use App\Http\Middleware\NegotiatesJsonApi;
 use App\Support\JsonApi\JsonApiErrors;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 
 /*
-| Prefijo de las rutas API.
+| API route prefix = 'api' (Laravel's default).
 |
-| PROVISIONAL: se asume que el API Gateway (patron /{service}/{path}) reenvia la
-| ruta COMPLETA -> este servicio expone /gps/*. Si el Gateway stripea su segmento
-| de servicio, cambiar a ''  (ver docs/GATEWAY.md, punto abierto). Es un one-liner.
+| The API Gateway (base /api, route /api/{service}/{path}) consumes the
+| {service} segment to pick the target and forwards /api/{path} to the service:
+|
+|     Flutter  ->  <gateway>/api/gps/locations
+|                        |  proxyTo(request, Services::GPS, 'locations')
+|                        v
+|     GPS      ->  /api/locations
+|
+| That is why routes here live under /api/* (not /gps/*). See docs/GATEWAY.md.
 */
-$apiPrefix = 'gps';
+$apiPrefix = 'api';
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -26,10 +33,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     /*
-    | Autorizacion de canales (routes/channels.php) + ruta /gps/broadcasting/auth.
-    | Prefijo "gps" para que el API Gateway la enrute igual que el resto.
-    | Middleware propio: solo IdentifyFromGateway (NO el grupo "api": la respuesta
-    | de auth de Pusher no es JSON:API y no debe pasar por NegotiatesJsonApi).
+    | Channel authorization (routes/channels.php) + the /api/broadcasting/auth
+    | route (via Gateway: /api/gps/broadcasting/auth).
+    | Own middleware: only IdentifyFromGateway (NOT the "api" group: the Pusher
+    | auth response is not JSON:API and must not go through NegotiatesJsonApi).
     */
     ->withBroadcasting(
         __DIR__.'/../routes/channels.php',
@@ -39,9 +46,10 @@ return Application::configure(basePath: dirname(__DIR__))
         ],
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // El microservicio corre DETRAS del API Gateway (red privada, no expuesta).
-        // Se confia en sus X-Forwarded-* para ver scheme/host/IP reales del cliente.
-        // TODO produccion: restringir 'at' al CIDR del Gateway en vez de '*'.
+        // The service runs BEHIND the API Gateway (private, non-exposed network).
+        // Its X-Forwarded-* headers are trusted to see the client's real
+        // scheme/host/IP.
+        // TODO production: restrict 'at' to the Gateway's CIDR instead of '*'.
         $middleware->trustProxies(
             at: '*',
             headers: Request::HEADER_X_FORWARDED_FOR
@@ -50,17 +58,25 @@ return Application::configure(basePath: dirname(__DIR__))
                 | Request::HEADER_X_FORWARDED_PROTO,
         );
 
-        // Todas las rutas del grupo "api" hacen content negotiation JSON:API
-        // y reconstruyen la identidad reenviada por el API Gateway.
+        // Every route in the "api" group does JSON:API content negotiation and
+        // rebuilds the identity forwarded by the API Gateway.
         $middleware->api(append: [
             IdentifyFromGateway::class,
             NegotiatesJsonApi::class,
         ]);
     })
+    ->withSchedule(function (Schedule $schedule): void {
+        // Housekeeping for the GPS volume problem — see config/gps.php and
+        // App\Console\Commands\PruneGpsLocations. Ingestion (HU1) always
+        // stores every reading; this only prunes old rows of finished trips.
+        $schedule->command('gps:prune-locations')
+            ->dailyAt('03:15')
+            ->withoutOverlapping();
+    })
     ->withExceptions(function (Exceptions $exceptions) use ($apiPrefix): void {
-        // Cualquier error en una ruta del microservicio se serializa como
-        // documento de error JSON:API (nunca HTML, nunca JSON arbitrario).
-        $exceptions->render(function (\Throwable $e, Request $request) use ($apiPrefix) {
+        // Any error on a service route is serialized as a JSON:API error
+        // document (never HTML, never arbitrary JSON).
+        $exceptions->render(function (Throwable $e, Request $request) use ($apiPrefix) {
             if ($request->is($apiPrefix.'/*') || $request->expectsJson()) {
                 return JsonApiErrors::fromThrowable($e, config('app.debug'));
             }

@@ -7,14 +7,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Tabla existente `buses` (NO administrada por este servicio).
- * Se fija $table explicitamente porque el plural de "Bus" es ambiguo.
+ * Existing `buses` table (NOT managed by this service).
+ * $table is set explicitly because the plural of "Bus" is ambiguous.
  *
- * @property int    $id
- * @property int    $company_id
+ * @property int $id
+ * @property int $company_id
  * @property string $plate_number
  * @property string $unit_number
- * @property bool   $is_active
+ * @property bool $is_active
  */
 class Bus extends Model
 {
