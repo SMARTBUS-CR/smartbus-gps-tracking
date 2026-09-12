@@ -14,10 +14,13 @@ use Illuminate\Support\Facades\Route;
 | Every response (errors included) follows the JSON:API standard.
 */
 
-Route::get('/ping', fn () => response()->json([
-    'service' => 'smartbus-gps',
-    'status' => 'ok',
-]))->name('gps.ping');
+Route::get('/ping', function () {
+    /** @unauthenticated */
+    return response()->json([
+        'service' => 'smartbus-gps',
+        'status' => 'ok',
+    ]);
+})->name('gps.ping');
 
 /*
 | HU1 - Receive GPS coordinates.

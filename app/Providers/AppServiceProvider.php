@@ -7,6 +7,7 @@ use Dedoc\Scramble\Scramble;
 use Dedoc\Scramble\Support\Generator\OpenApi;
 use Dedoc\Scramble\Support\Generator\Parameter;
 use Dedoc\Scramble\Support\Generator\Schema;
+use Dedoc\Scramble\Support\Generator\SecurityScheme;
 use Dedoc\Scramble\Support\Generator\Types\StringType;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
@@ -28,6 +29,14 @@ class AppServiceProvider extends ServiceProvider
     {
         // Define a gate to allow access to the API documentation for all users
         Gate::define('viewApiDocs', fn (?User $user = null) => true);
+
+        // Configure Scramble to use the Bearer token security scheme for all API operations in the generated OpenAPI documentation
+        Scramble::configure()
+            ->withDocumentTransformers(function (OpenApi $openApi) {
+                $openApi->secure(
+                    SecurityScheme::http('bearer')
+                );
+            });
 
         // Add a global header parameter for Accept-Language to all API operations in the generated OpenAPI documentation
         Scramble::afterOpenApiGenerated(function (OpenApi $openApi) {
