@@ -23,7 +23,7 @@
 |  2. Retention (housekeeping, App\Console\Commands\PruneGpsLocations) — old
 |     rows of trips that are already finished get deleted on a schedule.
 |     Independent of #1: it only prunes what has already been persisted.
-| 
+|
 */
 
 return [
