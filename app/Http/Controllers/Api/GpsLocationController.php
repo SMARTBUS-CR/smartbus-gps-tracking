@@ -23,6 +23,8 @@ class GpsLocationController extends Controller
     ) {}
 
     /**
+     * GPS location POST endpoint (HU1).
+     * 
      * HU1 — receive one GPS reading, always broadcast it live (HU2), and
      * return:
      *   - 201 with the JSON:API resource, when it was also persisted.

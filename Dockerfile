@@ -1,8 +1,10 @@
 FROM php:8.3-cli-alpine
 
-# Instalar dependencias del sistema y extensiones de PHP requeridas por Laravel y Reverb
+# Instalar dependencias del sistema (incluyendo nginx y gettext para envsubst)
 RUN apk add --no-cache \
     supervisor \
+    nginx \
+    gettext \
     bash \
     git \
     curl \
@@ -34,7 +36,7 @@ WORKDIR /var/www/html
 # Copiar archivos de dependencias primero para optimizar la caché de capas de Docker
 COPY composer.json composer.lock ./
 
-# Instalar dependencias de PHP sin ejecutar scripts de post-instalación por ahora
+# Instalar dependencias de PHP sin ejecutar scripts de post-instalación
 RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
 
 # Copiar el resto del código del microservicio
@@ -47,8 +49,9 @@ RUN composer dump-autoload --optimize
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
     && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-# Copiar configuración de Supervisor y script de entrada
+# Copiar configuraciones
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY docker/nginx.conf /etc/nginx/nginx.conf.template
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

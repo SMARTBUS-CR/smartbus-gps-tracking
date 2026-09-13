@@ -6,10 +6,13 @@ export PORT="${PORT:-10000}"
 
 echo "=== Preparando microservicio GPS Tracking ==="
 
+# Generar la configuración de Nginx reemplazando $PORT dinámicamente
+envsubst '$PORT' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+
 # Optimización de cachés de Laravel
 php artisan config:cache
 php artisan route:cache
 php artisan event:cache
 
-echo "=== Iniciando Supervisor (API + Reverb + Queues) ==="
+echo "=== Iniciando Supervisor (Nginx + API + Reverb + Queues) ==="
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
