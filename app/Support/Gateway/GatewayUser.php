@@ -5,7 +5,8 @@ namespace App\Support\Gateway;
 use Illuminate\Contracts\Auth\Authenticatable;
 
 /**
- * A "user" rebuilt from the headers the API Gateway forwards.
+ * A "user" resolved from the Bearer token the API Gateway forwards
+ * (see App\Http\Middleware\IdentifyFromGateway).
  *
  * It never hits the DB (there is no `users` table here). It is only the subject
  * of the request for channel authorization (routes/channels.php).
