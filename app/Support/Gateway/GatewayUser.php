@@ -16,9 +16,9 @@ final class GatewayUser implements Authenticatable
      * @param  list<string>  $roles
      */
     public function __construct(
-        public readonly int $id,
+        public readonly string $id,
         public readonly array $roles = [],
-        public readonly ?int $companyId = null,
+        public readonly ?string $companyId = null,
     ) {}
 
     public function hasRole(string $role): bool
@@ -33,7 +33,7 @@ final class GatewayUser implements Authenticatable
         return 'id';
     }
 
-    public function getAuthIdentifier(): int
+    public function getAuthIdentifier(): string
     {
         return $this->id;
     }

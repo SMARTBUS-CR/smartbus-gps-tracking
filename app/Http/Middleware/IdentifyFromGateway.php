@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Support\Gateway\GatewayUser;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -26,16 +27,17 @@ class IdentifyFromGateway
 
         $userId = $request->headers->get($headers['user_id']);
 
-        if ($userId !== null && $userId !== '' && ctype_digit((string) $userId)) {
+        // User and company ids are UUIDs (the Auth microservice's `users` table).
+        if ($userId !== null && Str::isUuid($userId)) {
             $roles = array_values(array_filter(array_map(
                 'trim',
                 explode(',', (string) $request->headers->get($headers['roles'], ''))
             )));
 
             $companyId = $request->headers->get($headers['company_id']);
-            $companyId = ($companyId !== null && ctype_digit((string) $companyId)) ? (int) $companyId : null;
+            $companyId = ($companyId !== null && Str::isUuid($companyId)) ? $companyId : null;
 
-            $user = new GatewayUser((int) $userId, $roles, $companyId);
+            $user = new GatewayUser($userId, $roles, $companyId);
 
             $request->setUserResolver(fn () => $user);
         }

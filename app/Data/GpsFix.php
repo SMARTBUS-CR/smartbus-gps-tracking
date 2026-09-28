@@ -14,7 +14,7 @@ use Carbon\CarbonImmutable;
 final readonly class GpsFix
 {
     public function __construct(
-        public int $tripId,
+        public string $tripId,
         public float $latitude,
         public float $longitude,
         public ?float $speedKmh,
@@ -23,7 +23,7 @@ final readonly class GpsFix
 
     /**
      * @param array{
-     *     trip_id: int|string,
+     *     trip_id: string,
      *     latitude: int|float|string,
      *     longitude: int|float|string,
      *     speed_kmh?: int|float|string|null,
@@ -33,7 +33,7 @@ final readonly class GpsFix
     public static function fromAttributes(array $attributes): self
     {
         return new self(
-            tripId: (int) $attributes['trip_id'],
+            tripId: (string) $attributes['trip_id'],
             latitude: (float) $attributes['latitude'],
             longitude: (float) $attributes['longitude'],
             speedKmh: isset($attributes['speed_kmh']) ? (float) $attributes['speed_kmh'] : null,

@@ -7,6 +7,7 @@ use App\Http\Requests\StoreGpsLocationRequest;
 use App\Http\Resources\GpsLocationResource;
 use App\Services\GpsLocationService;
 use Illuminate\Http\Response;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
 
 /**
@@ -53,10 +54,10 @@ class GpsLocationController extends Controller
      */
     public function latestForTrip(string $tripId): HttpResponse
     {
-        // Route param is a string; a non-numeric id can never match a trip.
-        abort_unless(ctype_digit($tripId), Response::HTTP_NOT_FOUND);
+        // A non-UUID can never match a trip (and would make Postgres throw).
+        abort_unless(Str::isUuid($tripId), Response::HTTP_NOT_FOUND);
 
-        $location = $this->service->latestForTrip((int) $tripId);
+        $location = $this->service->latestForTrip($tripId);
 
         return GpsLocationResource::make($location)->response();
     }

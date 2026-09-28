@@ -14,7 +14,7 @@ use Illuminate\Validation\Rule;
  *     "data": {
  *       "type": "gps-locations",
  *       "attributes": {
- *         "trip_id": 25,
+ *         "trip_id": "01a09332-3457-7315-885e-4ebb218f7262",
  *         "latitude": 10.4631,
  *         "longitude": -83.9921,
  *         "speed_kmh": 38.5,
@@ -46,7 +46,9 @@ class StoreGpsLocationRequest extends FormRequest
             'data.type' => ['required', 'string', Rule::in(['gps-locations'])],
             'data.attributes' => ['required', 'array'],
 
-            'data.attributes.trip_id' => ['required', 'integer', 'exists:trips,id'],
+            // `uuid` first and `bail`: a non-UUID never reaches the `exists` query
+            // (Postgres would throw "invalid input syntax for type uuid").
+            'data.attributes.trip_id' => ['bail', 'required', 'uuid', 'exists:trips,id'],
             'data.attributes.latitude' => ['required', 'numeric', 'between:-90,90'],
             'data.attributes.longitude' => ['required', 'numeric', 'between:-180,180'],
             'data.attributes.speed_kmh' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:400'],

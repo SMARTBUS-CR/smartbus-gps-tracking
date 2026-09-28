@@ -10,23 +10,30 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * Existing `trips` table (NOT managed by this service).
  *
  * Columns (see docs/DATABASE.md):
- *   id            bigint (identity)
- *   route_id      bigint  -> FK routes.id
- *   bus_id        bigint  -> FK buses.id
- *   driver_id     uuid    -> FK drivers.id   (note: uuid, not bigint)
+ *   id            uuid    (PK, no DB default)
+ *   route_id      uuid    -> FK routes.id
+ *   bus_id        uuid    -> FK buses.id
+ *   driver_id     uuid    -> FK drivers.id
  *   status        varchar(20)  default 'scheduled'
  *   started_at / completed_at   timestamp(0) nullable
  *   created_at / updated_at
  *
- * @property int $id
- * @property int $route_id
- * @property int $bus_id
+ * @property string $id
+ * @property string $route_id
+ * @property string $bus_id
  * @property string $driver_id
  * @property string $status
  */
 class Trip extends Model
 {
     protected $table = 'trips';
+
+    /**
+     * The PK is a UUID (string), not an autoincrement.
+     */
+    public $incrementing = false;
+
+    protected $keyType = 'string';
 
     protected $fillable = [
         'route_id',
@@ -40,8 +47,6 @@ class Trip extends Model
     protected function casts(): array
     {
         return [
-            'route_id' => 'integer',
-            'bus_id' => 'integer',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
         ];
@@ -64,8 +69,6 @@ class Trip extends Model
     }
 
     /**
-     * UUID FK: Eloquent uses the Driver model's keyType, nothing extra to configure here.
-     *
      * @return BelongsTo<Driver, $this>
      */
     public function driver(): BelongsTo

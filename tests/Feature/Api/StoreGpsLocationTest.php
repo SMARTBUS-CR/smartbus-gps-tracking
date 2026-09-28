@@ -8,6 +8,7 @@ use App\Models\Trip;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -37,7 +38,7 @@ class StoreGpsLocationTest extends TestCase
 
     private const BASE_LNG = -84.0800000;
 
-    private int $tripId;
+    private string $tripId;
 
     protected function setUp(): void
     {
@@ -50,7 +51,7 @@ class StoreGpsLocationTest extends TestCase
         if ($tripId === null) {
             $this->markTestSkipped('The operations DB has no trips to test against.');
         }
-        $this->tripId = (int) $tripId;
+        $this->tripId = $tripId;
 
         // Determinism: every test starts as if this trip had no prior readings,
         // regardless of what real data exists in the dev DB.
@@ -100,7 +101,7 @@ class StoreGpsLocationTest extends TestCase
 
     public function test_derives_the_postgis_point_with_lng_lat_order_and_srid_4326(): void
     {
-        $id = (int) $this->postJson(self::URL, $this->payload())->json('data.id');
+        $id = $this->postJson(self::URL, $this->payload())->json('data.id');
 
         $point = DB::selectOne(
             'select ST_Y(location::geometry) as lat,
@@ -137,9 +138,22 @@ class StoreGpsLocationTest extends TestCase
 
     public function test_rejects_a_trip_id_that_does_not_exist(): void
     {
-        $this->postJson(self::URL, $this->payload(['trip_id' => 999_999_999]))
+        $this->postJson(self::URL, $this->payload(['trip_id' => (string) Str::uuid7()]))
             ->assertStatus(422)
             ->assertJsonPath('errors.0.source.pointer', '/data/attributes/trip_id');
+    }
+
+    public function test_rejects_a_trip_id_that_is_not_a_uuid(): void
+    {
+        // Must be a clean 422, not a Postgres "invalid input syntax for type uuid" 500.
+        $this->postJson(self::URL, $this->payload(['trip_id' => 1]))
+            ->assertStatus(422)
+            ->assertJsonPath('errors.0.source.pointer', '/data/attributes/trip_id');
+    }
+
+    public function test_latest_location_returns_404_for_a_non_uuid_trip_id(): void
+    {
+        $this->getJson('/api/trips/not-a-uuid/location')->assertNotFound();
     }
 
     public function test_broadcasts_bus_location_updated_on_the_private_trip_channel(): void

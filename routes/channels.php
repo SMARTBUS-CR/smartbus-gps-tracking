@@ -3,6 +3,7 @@
 use App\Models\Trip;
 use App\Support\Gateway\GatewayUser;
 use Illuminate\Support\Facades\Broadcast;
+use Illuminate\Support\Str;
 
 /*
 |--------------------------------------------------------------------------
@@ -26,11 +27,12 @@ Broadcast::channel('trip.{tripId}', function (?GatewayUser $user, string $tripId
     //     return false;
     // }
 
-    if (! ctype_digit($tripId)) {
+    // A non-UUID can never match a trip (and would make Postgres throw).
+    if (! Str::isUuid($tripId)) {
         return false;
     }
 
-    $trip = Trip::query()->find((int) $tripId, ['id', 'status']);
+    $trip = Trip::query()->find($tripId, ['id', 'status']);
 
     // A trip can only be followed while it exists and is scheduled / in progress.
     return $trip !== null
