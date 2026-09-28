@@ -46,28 +46,25 @@ Todas las respuestas y errores son **JSON:API** (`application/vnd.api+json`), sa
 
 ## 2. ¿Qué autenticación necesita?
 
-**Ninguna propia.** Exactamente el mismo modelo que el resto de microservicios:
+**Ninguna propia.** El Gateway valida el token con el Authentication Service y
+reenvía **la misma** cabecera `Authorization` al microservicio (no inyecta `X-User-*`):
 
 ```
-Flutter ──Authorization: Bearer <token>──▶ Gateway ──valida──▶ GPS µservice
-                                              │
-                                              └── reenvía  X-User-Id
-                                                           X-User-Roles
+Flutter ──Authorization: Bearer <token>──▶ Gateway ──valida con Auth──▶ GPS µservice
+                                                                        │
+                                   (solo si la ruta necesita el usuario) ▼
+                                          Auth  GET /api/user?include=roles
 ```
 
-- **Todas** las rutas `/api/gps/*` requieren token válido. No hay "excepción de login"
-  aquí (el GPS service no tiene endpoints públicos). `/api/gps/ping` puede quedar sin
-  token si el Gateway lo necesita para health checks.
-- El GPS service **confía ciegamente** en `X-User-Id` / `X-User-Roles`.
-  → El Gateway **debe eliminar** cualquier `X-User-*` que venga del cliente.
-  **Verificado:** una request directa con `X-User-Id: 999` es tomada como usuario 999.
-  Por eso: red Gateway↔GPS privada + Gateway que sanea la entrada.
-- No se usa `X-User-Id` para autorizar todavía (eso llega con HU1: verificar que el
-  conductor es dueño del viaje). Por ahora solo hace falta que **llegue**.
+- **Todas** las rutas `/api/gps/*` requieren token válido en el Gateway.
+- El GPS service resuelve **quién** es el usuario con `IdentifyFromGateway`: manda el
+  mismo Bearer token a Auth `GET /api/user?include=roles` y arma un `GatewayUser { id, roles }`.
+  - Es **perezoso**: solo llama a Auth cuando algo pide `$request->user()` (hoy, la
+    autorización del canal en `/api/broadcasting/auth`). `POST /api/locations` no llama a Auth.
+  - Se **cachea** por token (`AUTH_SERVICE_CACHE_TTL`, 300 s por defecto). Los errores no se cachean.
+  - Cualquier `X-User-*` que venga del cliente se **ignora**: la identidad no se puede falsificar.
 
-Nombres de cabecera configurables en [`config/gateway.php`](../config/gateway.php)
-(env `GATEWAY_HEADER_USER_ID`, `GATEWAY_HEADER_ROLES`). Default = `X-User-Id` / `X-User-Roles`,
-que es lo que ya envía el Gateway.
+Configuración en [`config/gateway.php`](../config/gateway.php) (env `AUTH_SERVICE_URL`).
 
 ---
 
@@ -85,17 +82,19 @@ Base: `https://smartbus-api-gateway.onrender.com/api`
 
 ## 4. ¿Qué necesita Reverb (WebSockets)?
 
-⚠️ **La conexión WebSocket NO pasa por el Gateway.**
-El proxy `ANY /{service}/{path}` es HTTP (Guzzle/Http::) y **no** hace el *upgrade*
-a WebSocket. Reverb tiene que exponerse por su **propio host**.
+El proxy de Laravel del Gateway (`proxyTo`, Http::) es HTTP y **no** hace el *upgrade*
+a WebSocket. Por eso el Gateway tiene un **nginx delante** (`docker/nginx.conf.template`)
+que manda `/app/*` (y `/api/gps/app/*`) directo al nginx del GPS service, que a su vez
+lo pasa a Reverb (`location /app` → `127.0.0.1:8080`). Todo lo demás (`/api/gps/*` REST
+y `broadcasting/auth`) pasa por Laravel, que valida el token.
 
 ```
 Pasajero Flutter
    │
-   ├── wss://<host-de-reverb>/app/<REVERB_APP_KEY>      ← conexión WS: DIRECTA a Reverb
-   │       (Reverb como su propio servicio en Render, puerto 443, TLS)
+   ├── wss://<gateway>/app/<REVERB_APP_KEY>          ← WS: nginx del Gateway → Reverb
+   │   (o directo a wss://<host-gps>/app/<KEY>)
    │
-   └── POST https://.../api/gps/broadcasting/auth        ← auth del canal: vía Gateway
+   └── POST https://<gateway>/api/gps/broadcasting/auth  ← auth del canal: Laravel del Gateway
 ```
 
 **Para desplegar Reverb en Render:** un servicio aparte (o el mismo servicio corriendo
@@ -114,18 +113,19 @@ authHeaders:  { 'Authorization': 'Bearer <token>' }     // lo consume el Gateway
 
 ---
 
-## 5. Qué agregar al Gateway — checklist
+## 5. Qué necesita el Gateway — checklist
 
-1. **Registrar `gps`** en el enum/registro de servicios del proxy (`Services::GPS`),
-   apuntando a la URL del microservicio GPS en Render (dev y prod).
+1. **Registrar `gps`** en `Services::GPS`, apuntando a la URL del microservicio (dev y prod).
 2. Rutear `/api/gps/{path}` con `proxyTo($request, Services::GPS->value, $path)` — el
    microservicio recibe `/api/{path}` (ej. `/api/gps/locations` → `/api/locations`).
-3. Aplicar a `/api/gps/*` el **mismo middleware de auth** que a los servicios protegidos
-   (validar `Bearer`, reenviar `X-User-Id` / `X-User-Roles`).
-4. **Stripear** `X-User-*` entrantes del cliente antes de reenviar.
-5. Reenviar `X-Forwarded-For` / `-Proto` / `-Host` (Render normalmente ya lo hace).
-6. **No** intentar proxiar el WebSocket. Reverb va por su propio host; Flutter apunta
-   ahí directo para `wss://` (§4).
+   El nginx del Gateway **no** debe interceptar `/api/gps/*` REST: si lo hace, se salta
+   la validación del token.
+3. Aplicar a `/api/gps/*` el middleware `validate.token` y **reenviar la cabecera
+   `Authorization`** tal cual (el GPS service la usa para resolver al usuario).
+4. Los IDs (`tripId`, etc.) son **UUID**: nada de `whereNumber`.
+5. Reenviar `socket_id` y `channel_name` de `broadcasting/auth`. Echo/Pusher los manda
+   como `application/x-www-form-urlencoded`; el Gateway los convierte a JSON en
+   `GPSTrackingController::authenticateBroadcast` (este servicio acepta ambos formatos).
 
 Del lado del microservicio ya está: `apiPrefix = 'api'` en
 [`bootstrap/app.php`](../bootstrap/app.php) → rutas en `/api/*`.
@@ -137,7 +137,8 @@ Del lado del microservicio ya está: `apiPrefix = 'api'` en
 | | |
 |---|---|
 | Servicio | **`gps`** → URL del GPS microservice en Render |
-| Rutas | `POST /api/gps/locations`, `GET /api/gps/trips/{tripId}/location`, `POST /api/gps/broadcasting/auth`, `GET /api/gps/ping` |
+| Rutas | `POST /api/gps/locations`, `GET /api/gps/trips/{tripId}/location`, `GET\|POST /api/gps/broadcasting/auth` |
 | El microservicio recibe | `/api/{path}` (el Gateway quita `gps`) |
-| Auth | igual que los demás: `Bearer` → `X-User-Id` + `X-User-Roles`; stripear `X-User-*` del cliente |
-| WebSocket | **fuera del Gateway** — Reverb con host propio (§4) |
+| Auth | `validate.token` en el Gateway + reenviar `Authorization: Bearer` tal cual |
+| IDs | UUID |
+| WebSocket | nginx del Gateway `/app/*` → GPS → Reverb (§4) |

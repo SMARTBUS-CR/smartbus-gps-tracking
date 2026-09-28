@@ -28,12 +28,12 @@ Passenger Flutter (Echo)
    ▼
 POST https://smartbus-api-gateway.onrender.com/api/gps/broadcasting/auth
    │                                     { channel_name, socket_id }
-   │  el Gateway valida el token y AÑADE cabeceras:
-   │     X-User-Id: 42
-   │     X-User-Roles: passenger
+   │  el Gateway valida el token y reenvía el MISMO
+   │     Authorization: Bearer <token>
    ▼
 GPS µservice  →  IdentifyFromGateway (middleware)
-   │  reconstruye un GatewayUser desde esas cabeceras
+   │  pregunta a Auth  GET /api/user?include=roles  con ese token
+   │  (cacheado por token) y arma un GatewayUser { id, roles }
    ▼
 routes/channels.php  →  callback trip.{tripId}
    │  ¿hay GatewayUser?  ¿el viaje existe y está scheduled/in_progress?
@@ -43,7 +43,8 @@ routes/channels.php  →  callback trip.{tripId}
 
 - Middleware: [`app/Http/Middleware/IdentifyFromGateway.php`](../app/Http/Middleware/IdentifyFromGateway.php)
 - "Usuario": [`app/Support/Gateway/GatewayUser.php`](../app/Support/Gateway/GatewayUser.php) (no toca BD)
-- Nombres de cabecera: [`config/gateway.php`](../config/gateway.php) — default `X-User-Id` / `X-User-Roles` (lo que ya envía el Gateway)
+- URL del Authentication Service y TTL de caché: [`config/gateway.php`](../config/gateway.php) (`AUTH_SERVICE_URL`)
+- Las cabeceras `X-User-*` se **ignoran**: la identidad sale solo del token, así que no se puede falsificar.
 - La ruta interna `/api/broadcasting/auth` (vía Gateway: `/api/gps/broadcasting/auth`)
   se registra en `bootstrap/app.php` → `withBroadcasting()` con prefijo `api` y **solo**
   el middleware `IdentifyFromGateway` (no el grupo `api`: la respuesta de Pusher no es JSON:API).
@@ -64,11 +65,9 @@ Si más adelante se quiere restringir (por compañía, por reserva…), se añad
 
 El Gateway, para **toda** request a `/api/gps/*` (incluida `/api/gps/broadcasting/auth`):
 1. valida el token del usuario,
-2. **elimina** cualquier `X-User-*` entrante del cliente,
-3. añade `X-User-Id` (obligatoria) y `X-User-Roles`,
-4. reenvía `channel_name` y `socket_id` del body sin tocarlos.
-
-La red Gateway ↔ GPS se asume privada (no expuesta a internet).
+2. reenvía la cabecera `Authorization: Bearer <token>` sin tocarla,
+3. reenvía `channel_name` y `socket_id` del body como JSON (Echo los manda como
+   form-urlencoded; el Gateway los convierte en `authenticateBroadcast`).
 Contrato completo en [GATEWAY.md](GATEWAY.md).
 
 ### Cliente (Flutter / Laravel Echo Dart) — se detalla en Step 11
@@ -78,12 +77,12 @@ Echo.private('trip.25')
     .listen('.BusLocationUpdated', (e) { /* mover marcador */ });
 ```
 `authEndpoint` de Echo = `https://smartbus-api-gateway.onrender.com/api/gps/broadcasting/auth`,
-con el token del usuario en `Authorization` (lo consume el Gateway, no este servicio).
+con el token del usuario en `Authorization` (lo valida el Gateway y este servicio lo usa para saber quién es).
 La conexión WebSocket en sí va **directa a Reverb** (host propio), no por el Gateway
 — ver [GATEWAY.md §4](GATEWAY.md).
 
 ### Verificado en Step 10
 - `broadcastOn()` → `private-trip.1`.
-- `POST /api/gps/broadcasting/auth` con `X-User-Id` + viaje `in_progress` → `200 {"auth":"..."}`.
-- Sin cabecera → `403`. Viaje `completed` → `403`. Viaje inexistente → `403`.
+- `POST /api/gps/broadcasting/auth` con Bearer token válido + viaje `in_progress` → `200 {"auth":"..."}`.
+- Sin token / token inválido → `403`. Viaje `completed` → `403`. Viaje inexistente → `403`.
 - Sin migraciones; BD de operaciones intacta.

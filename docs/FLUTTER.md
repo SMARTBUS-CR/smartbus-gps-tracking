@@ -57,7 +57,7 @@ final echo = Echo<PusherChannelsFlutter, PusherChannel>(
     // El WebSocket va directo a Reverb; solo la auth del canal privado pasa por el Gateway:
     authEndpoint: 'https://smartbus-api-gateway.onrender.com/api/gps/broadcasting/auth',
     auth: EchoAuth(headers: {
-      'Authorization': 'Bearer $userToken', // lo valida el Gateway, no el GPS service
+      'Authorization': 'Bearer $userToken', // lo valida el Gateway y lo reenvía al GPS service
       'Accept': 'application/json',
     }),
   ),
@@ -152,7 +152,7 @@ abrir mapa del viaje 25
 
 Suscriptor WebSocket (protocolo Pusher, Node) → `private-trip.1`:
 1. conecta a Reverb, obtiene `socket_id`
-2. `POST /api/gps/broadcasting/auth` con `X-User-Id` → `200` + firma
+2. `POST /api/gps/broadcasting/auth` con `Authorization: Bearer <token>` → `200` + firma
 3. `pusher:subscribe` → `subscription_succeeded`
 4. `POST /api/gps/locations` (coordenada real)
 5. **recibe** `BusLocationUpdated` en `private-trip.1` con el payload exacto de arriba
