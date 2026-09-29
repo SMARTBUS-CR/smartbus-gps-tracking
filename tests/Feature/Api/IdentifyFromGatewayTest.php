@@ -1,7 +1,5 @@
 <?php
 
-namespace Tests\Feature\Api;
-
 use App\Http\Middleware\IdentifyFromGateway;
 use App\Support\Gateway\GatewayUser;
 use Illuminate\Http\Client\Request as ClientRequest;
@@ -9,126 +7,97 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
-use Tests\TestCase;
 
-/**
- * The API Gateway forwards the client's  Authorization: Bearer <token>  as-is.
- * IdentifyFromGateway resolves the user by asking the Authentication Service
- * (GET /api/user?include=roles), lazily and cached per token.
- */
-class IdentifyFromGatewayTest extends TestCase
-{
-    private const AUTH_URL = 'https://smartbus-authentication.test';
+use function Pest\Laravel\getJson;
+use function Pest\Laravel\withHeaders;
+use function Pest\Laravel\withToken;
 
-    private const USER_ID = '01a09332-3457-7315-885e-4ebb218f7262';
+/*
+| The API Gateway forwards the client's  Authorization: Bearer <token>  as-is.
+| IdentifyFromGateway resolves the user by asking the Authentication Service
+| (GET /api/user?include=roles), lazily and cached per token.
+*/
 
-    protected function setUp(): void
-    {
-        parent::setUp();
+const AUTH_URL = 'https://smartbus-authentication.test';
+const USER_ID = '01a09332-3457-7315-885e-4ebb218f7262';
 
-        config(['gateway.auth.url' => self::AUTH_URL]);
-        Cache::flush();
+beforeEach(function () {
+    config(['gateway.auth.url' => AUTH_URL]);
+    Cache::flush();
 
-        Route::middleware(IdentifyFromGateway::class)->get('/_test/whoami', function (Request $request) {
-            $user = $request->user();
+    Route::middleware(IdentifyFromGateway::class)->get('/_test/whoami', function (Request $request) {
+        $user = $request->user();
 
-            return response()->json($user instanceof GatewayUser
-                ? ['id' => $user->id, 'roles' => $user->roles]
-                : ['id' => null]);
-        });
+        return response()->json($user instanceof GatewayUser
+            ? ['id' => $user->id, 'roles' => $user->roles]
+            : ['id' => null]);
+    });
 
-        Route::middleware(IdentifyFromGateway::class)->get('/_test/anonymous', fn () => response()->json(['ok' => true]));
-    }
+    Route::middleware(IdentifyFromGateway::class)->get('/_test/anonymous', fn () => response()->json(['ok' => true]));
+});
 
-    private function authUserResponse(string $id = self::USER_ID): array
-    {
-        return [
-            'data' => [
-                'id' => $id,
-                'type' => 'users',
-                'attributes' => ['name' => 'Pasajero', 'email' => 'p@smartbus.com'],
-                'relationships' => [
-                    'roles' => ['data' => [['id' => '4', 'type' => 'roles']]],
-                ],
-            ],
-            // Real shape of the Authentication Service: the role name is in `included`.
-            'included' => [
-                ['id' => '4', 'type' => 'roles', 'attributes' => ['value' => 'passenger', 'label' => 'Pasajero']],
-            ],
-        ];
-    }
+it('resolves the user and role names from the bearer token', function () {
+    Http::fake([AUTH_URL.'/api/user*' => Http::response(authServiceUser(USER_ID))]);
 
-    public function test_it_resolves_the_user_from_the_bearer_token(): void
-    {
-        Http::fake([self::AUTH_URL.'/api/user*' => Http::response($this->authUserResponse())]);
+    withToken('valid-token')->getJson('/_test/whoami')
+        ->assertOk()
+        ->assertExactJson(['id' => USER_ID, 'roles' => ['passenger']]);
 
-        $this->withToken('valid-token')->getJson('/_test/whoami')
-            ->assertOk()
-            ->assertExactJson(['id' => self::USER_ID, 'roles' => ['passenger']]);
+    Http::assertSent(fn (ClientRequest $request) => $request->url() === AUTH_URL.'/api/user?include=roles'
+        && $request->hasHeader('Authorization', 'Bearer valid-token'));
+});
 
-        Http::assertSent(fn (ClientRequest $request) => $request->url() === self::AUTH_URL.'/api/user?include=roles'
-            && $request->hasHeader('Authorization', 'Bearer valid-token'));
-    }
+it('caches the identity per token', function () {
+    Http::fake([AUTH_URL.'/api/user*' => Http::response(authServiceUser(USER_ID))]);
 
-    public function test_it_caches_the_identity_per_token(): void
-    {
-        Http::fake([self::AUTH_URL.'/api/user*' => Http::response($this->authUserResponse())]);
+    withToken('valid-token')->getJson('/_test/whoami')->assertJsonPath('id', USER_ID);
+    withToken('valid-token')->getJson('/_test/whoami')->assertJsonPath('id', USER_ID);
 
-        $this->withToken('valid-token')->getJson('/_test/whoami')->assertJsonPath('id', self::USER_ID);
-        $this->withToken('valid-token')->getJson('/_test/whoami')->assertJsonPath('id', self::USER_ID);
+    Http::assertSentCount(1);
+});
 
-        Http::assertSentCount(1);
-    }
+it('has no user without a token', function () {
+    Http::fake();
 
-    public function test_there_is_no_user_without_a_token(): void
-    {
-        Http::fake();
+    getJson('/_test/whoami')->assertExactJson(['id' => null]);
 
-        $this->getJson('/_test/whoami')->assertExactJson(['id' => null]);
+    Http::assertNothingSent();
+});
 
-        Http::assertNothingSent();
-    }
+it('ignores spoofed identity headers', function () {
+    Http::fake();
 
-    public function test_spoofed_identity_headers_are_ignored(): void
-    {
-        Http::fake();
+    withHeaders(['X-User-Id' => USER_ID, 'X-User-Roles' => 'admin'])
+        ->getJson('/_test/whoami')
+        ->assertExactJson(['id' => null]);
+});
 
-        $this->withHeaders(['X-User-Id' => self::USER_ID, 'X-User-Roles' => 'admin'])
-            ->getJson('/_test/whoami')
-            ->assertExactJson(['id' => null]);
-    }
+it('has no user when the Authentication Service rejects the token, and does not cache the failure', function () {
+    Http::fake([AUTH_URL.'/api/user*' => Http::response(['errors' => []], 401)]);
 
-    public function test_there_is_no_user_when_the_auth_service_rejects_the_token(): void
-    {
-        Http::fake([self::AUTH_URL.'/api/user*' => Http::response(['errors' => []], 401)]);
+    withToken('expired-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
+    withToken('expired-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
 
-        $this->withToken('expired-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
-        $this->withToken('expired-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
+    // A transient error must not lock the user out.
+    Http::assertSentCount(2);
+});
 
-        // Failures are not cached: a transient error does not lock the user out.
-        Http::assertSentCount(2);
-    }
+it('has no user when the Authentication Service is unreachable', function () {
+    Http::fake([AUTH_URL.'/api/user*' => fn () => throw new RuntimeException('auth down')]);
 
-    public function test_there_is_no_user_when_the_auth_service_is_unreachable(): void
-    {
-        Http::fake([self::AUTH_URL.'/api/user*' => fn () => throw new \RuntimeException('auth down')]);
+    withToken('valid-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
+});
 
-        $this->withToken('valid-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
-    }
+it('rejects a user id that is not a UUID', function () {
+    Http::fake([AUTH_URL.'/api/user*' => Http::response(authServiceUser('42'))]);
 
-    public function test_a_non_uuid_user_id_is_rejected(): void
-    {
-        Http::fake([self::AUTH_URL.'/api/user*' => Http::response($this->authUserResponse('42'))]);
+    withToken('valid-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
+});
 
-        $this->withToken('valid-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
-    }
+it('never calls the Authentication Service on routes that do not need the user', function () {
+    Http::fake();
 
-    public function test_routes_that_do_not_need_the_user_never_call_the_auth_service(): void
-    {
-        Http::fake();
+    withToken('valid-token')->getJson('/_test/anonymous')->assertOk();
 
-        $this->withToken('valid-token')->getJson('/_test/anonymous')->assertOk();
-
-        Http::assertNothingSent();
-    }
-}
+    Http::assertNothingSent();
+});
