@@ -14,8 +14,14 @@ use Illuminate\Support\Facades\Route;
 | Every response (errors included) follows the JSON:API standard.
 */
 
+/**
+ * Health check
+ *
+ * Lightweight liveness probe of the GPS microservice.
+ *
+ * @unauthenticated
+ */
 Route::get('/ping', function () {
-    /** @unauthenticated */
     return response()->json([
         'service' => 'smartbus-gps',
         'status' => 'ok',
