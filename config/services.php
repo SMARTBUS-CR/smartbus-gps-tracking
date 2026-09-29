@@ -37,7 +37,7 @@ return [
 
     /*
     | OpenRouteService - ruta / distancia / matriz. Integracion FUTURA.
-    | Se consumira detras de una capa de servicio, nunca desde un controller.
+    | It will be consumed behind a service layer, never from a controller.
     | Ver docs/INTEGRATIONS.md.
     */
     'openrouteservice' => [
@@ -48,8 +48,8 @@ return [
     ],
 
     /*
-    | OpenStreetMap - tiles del mapa. Lo consume FLUTTER directamente.
-    | El backend solo guarda la URL por si se centraliza el proveedor.
+    | OpenStreetMap - map tiles. Consumed by FLUTTER directly.
+    | The backend only stores the URL in case the provider is centralized.
     | Ver docs/INTEGRATIONS.md.
     */
     'openstreetmap' => [
