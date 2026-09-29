@@ -97,5 +97,17 @@ jobs:
             # STEP 2.2: API DOCUMENTATION (Scramble)
             # ==========================================
 
+            # Scramble reads the table columns to infer the resource types, so it needs
+            # the schema: point it to the testing service container (never the real DB).
             - name: Validate OpenAPI documentation
-              run: php artisan scramble:analyze
+              env:
+                  DB_CONNECTION: pgsql
+                  DB_HOST: 127.0.0.1
+                  DB_PORT: 54329
+                  DB_DATABASE: smartbus_gps_testing
+                  DB_USERNAME: smartbus
+                  DB_PASSWORD: smartbus
+                  DB_SSLMODE: disable
+              run: |
+                  php artisan migrate:fresh --path=database/migrations-testing --force
+                  php artisan scramble:analyze
