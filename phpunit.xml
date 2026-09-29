@@ -24,11 +24,22 @@
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
         <!--
-          No migrations: the operations DB already exists and is owned by another
-          team. Tests use the .env pgsql connection with DatabaseTransactions
-          (each test runs inside a transaction that is rolled back).
+          Tests NEVER use the shared operations DB (Aiven) from .env. They run
+          against a disposable PostgreSQL + PostGIS database:
+            local: docker compose -f docker-compose.testing.yml up -d
+            CI:    service container in .github/workflows/ci-cd.yml
+          The schema comes from database/migrations-testing (RefreshDatabase).
+          force="true" overrides any value loaded from .env.
         -->
-        <env name="DB_CONNECTION" value="pgsql"/>
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_URL" value="" force="true"/>
+        <env name="DB_HOST" value="127.0.0.1" force="true"/>
+        <env name="DB_PORT" value="54329" force="true"/>
+        <env name="DB_DATABASE" value="smartbus_gps_testing" force="true"/>
+        <env name="DB_USERNAME" value="smartbus" force="true"/>
+        <env name="DB_PASSWORD" value="smartbus" force="true"/>
+        <env name="DB_SSLMODE" value="disable" force="true"/>
+        <env name="AUTH_SERVICE_URL" value="https://smartbus-authentication.test" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
