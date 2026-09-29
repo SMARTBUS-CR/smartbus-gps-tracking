@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\Concerns\HasLocationPoint;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
@@ -38,7 +39,7 @@ class GpsLocation extends Model
 {
     // The DB has no default for `id`: HasUuids generates a UUIDv7 on insert
     // (same version the DB team uses), which is also time-ordered.
-    use HasLocationPoint, HasUuids;
+    use HasFactory, HasLocationPoint, HasUuids;
 
     protected $table = 'gps_locations';
 
