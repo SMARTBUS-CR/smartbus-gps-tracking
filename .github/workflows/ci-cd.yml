@@ -1,0 +1,101 @@
+name: CI/CD Pipeline
+
+on:
+    push:
+        branches: ["main", "dev", "feature/*", "hotfix/*", "issue-*"]
+    pull_request:
+        branches: ["main", "dev"]
+
+# Stop concurrent runs of the same workflow on the same branch to prevent conflicts and redundant deployments
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    # ==========================================
+    # STEP 1: LINTING (Laravel Pint)
+    # ==========================================
+    lint:
+        name: Check Code Style
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: true
+            matrix:
+                php: [8.4]
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v5
+              with:
+                  ref: ${{ github.head_ref || github.ref }}
+
+            - name: Setup PHP
+              uses: shivammathur/setup-php@v2
+              with:
+                  php-version: ${{ matrix.php }}
+                  tools: pint
+
+            # --test fails the pipeline instead of silently fixing the files.
+            - name: Run Pint
+              run: pint --test
+
+    # ==========================================
+    # STEP 2: TESTING (Pest)
+    # ==========================================
+    laravel-tests:
+        name: Run Laravel Tests
+        runs-on: ubuntu-latest
+        needs: [lint]
+
+        # Disposable PostgreSQL + PostGIS database (same image as docker-compose.testing.yml).
+        # The shared operations DB is never used by the tests.
+        services:
+            gps-testing-db:
+                image: postgis/postgis:17-3.5
+                env:
+                    POSTGRES_DB: smartbus_gps_testing
+                    POSTGRES_USER: smartbus
+                    POSTGRES_PASSWORD: smartbus
+                ports:
+                    - 54329:5432
+                options: >-
+                    --health-cmd "pg_isready -U smartbus -d smartbus_gps_testing"
+                    --health-interval 5s
+                    --health-timeout 5s
+                    --health-retries 20
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v6
+              with:
+                  ref: ${{ github.head_ref || github.ref }}
+
+            # ==========================================
+            # STEP 2.1: LARAVEL TESTS (Pest)
+            # ==========================================
+
+            - name: Setup PHP
+              uses: shivammathur/setup-php@v2
+              with:
+                  php-version: 8.4
+                  extensions: pdo_pgsql, pgsql, sockets, intl
+                  coverage: xdebug
+
+            - name: Install Dependencies
+              run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+
+            - name: Directory Permissions
+              run: chmod -R 777 storage bootstrap/cache
+
+            - name: Run CI Bootstrap
+              run: composer run ci
+
+            # The schema is built from database/migrations-testing (see tests/TestCase.php).
+            - name: Run Tests
+              run: php artisan test --ci --parallel --compact
+
+            # ==========================================
+            # STEP 2.2: API DOCUMENTATION (Scramble)
+            # ==========================================
+
+            - name: Validate OpenAPI documentation
+              run: php artisan scramble:analyze
