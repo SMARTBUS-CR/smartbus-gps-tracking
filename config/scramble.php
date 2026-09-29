@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\JsonApi\Scramble\JsonApiErrorResponseExtension;
 use Dedoc\Scramble\Http\Middleware\RestrictedDocsAccess;
 
 return [
@@ -154,7 +155,10 @@ return [
         RestrictedDocsAccess::class,
     ],
 
-    'extensions' => [],
+    'extensions' => [
+        // Document 422 / 404 errors as JSON:API error documents (what the API really returns).
+        JsonApiErrorResponseExtension::class,
+    ],
 
     /*
      * Automatically document API security (OpenAPI `security` / `securitySchemes`) based on route
