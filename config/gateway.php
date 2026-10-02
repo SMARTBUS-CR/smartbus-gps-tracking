@@ -2,31 +2,35 @@
 
 /*
 |--------------------------------------------------------------------------
-| API Gateway contract
+| API Gateway / Authentication contract
 |--------------------------------------------------------------------------
-| The GPS microservice does NOT authenticate: it trusts the identity the API
-| Gateway (Laravel, on Render) has already verified and forwards as HTTP headers.
+| The GPS microservice does NOT own users or tokens. The API Gateway validates
+| the client's  Authorization: Bearer <token>  against the Authentication
+| Service and then forwards the SAME header to this service (it does not
+| inject X-User-* headers).
 |
-| The Gateway already uses this same pattern with the Authentication Service:
-|   it validates  Authorization: Bearer <token>  and forwards  X-User-Id / X-User-Roles.
+| When a request needs to know WHO the user is (e.g. channel authorization on
+| /api/broadcasting/auth), IdentifyFromGateway resolves the identity by asking
+| the Authentication Service:  GET {auth.url}/api/user?include=roles
+| with that Bearer token, and caches the answer per token.
 |
-| For every request to  /api/gps/*  (including /api/gps/broadcasting/auth) the
-| Gateway MUST:
-|   - validate the token,
-|   - forward X-User-Id (and X-User-Roles),
-|   - strip any X-User-* coming from the client (anti-spoofing).
-|
-| The network between the Gateway and this service is assumed trusted (not exposed).
+| The identity is resolved lazily: routes that never call $request->user()
+| (e.g. POST /api/locations) never hit the Authentication Service.
 */
 
 return [
 
-    'headers' => [
-        // Header names the SmartBus Gateway already sends.
-        'user_id' => env('GATEWAY_HEADER_USER_ID', 'X-User-Id'),
-        'roles' => env('GATEWAY_HEADER_ROLES', 'X-User-Roles'),
-        // The Gateway does NOT send company_id yet; kept configurable in case it does.
-        'company_id' => env('GATEWAY_HEADER_COMPANY_ID', 'X-User-Company-Id'),
+    'auth' => [
+        // Same env name the API Gateway uses for the Authentication Service.
+        'url' => env('AUTH_SERVICE_URL', 'http://localhost:8000'),
+
+        // Returns the token's user as JSON:API, with its roles as a relationship.
+        'user_path' => env('AUTH_SERVICE_USER_PATH', '/api/user?include=roles'),
+
+        'timeout' => (int) env('AUTH_SERVICE_TIMEOUT', 5),
+
+        // Seconds a resolved identity is cached per token (only successes are cached).
+        'cache_ttl' => (int) env('AUTH_SERVICE_CACHE_TTL', 300),
     ],
 
 ];

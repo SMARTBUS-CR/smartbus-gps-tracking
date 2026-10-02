@@ -3,6 +3,8 @@
 namespace App\Http\Resources;
 
 use App\Http\Resources\JsonApi\JsonApiResource;
+use App\Models\GpsLocation;
+use Illuminate\Http\Request;
 
 /**
  * JSON:API resource for `gps_locations`.
@@ -14,9 +16,9 @@ use App\Http\Resources\JsonApi\JsonApiResource;
  *   {
  *     "data": {
  *       "type": "gps-locations",
- *       "id": "1",
+ *       "id": "01a0a1f0-9c2e-7b3a-8f41-2d6e5c7b9a10",
  *       "attributes": {
- *         "trip_id": 25,
+ *         "trip_id": "01a09332-3457-7315-885e-4ebb218f7262",
  *         "latitude": 10.4631,
  *         "longitude": -83.9921,
  *         "speed_kmh": 38.5,
@@ -26,9 +28,19 @@ use App\Http\Resources\JsonApi\JsonApiResource;
  *   }
  *
  * With `?include=trip` the full trip is embedded under `included`.
+ *
+ * @mixin GpsLocation
  */
 class GpsLocationResource extends JsonApiResource
 {
+    /**
+     * Explicit JSON:API type, so the OpenAPI docs (Scramble) show the real value.
+     */
+    public function toType(Request $request): string
+    {
+        return 'gps-locations';
+    }
+
     /**
      * Listed by name: the native resource engine reads $this->resource->{name}.
      *

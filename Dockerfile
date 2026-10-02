@@ -1,6 +1,6 @@
 FROM php:8.3-cli-alpine
 
-# Instalar dependencias del sistema (incluyendo nginx y gettext para envsubst)
+# Install system dependencies (including nginx and gettext for envsubst)
 RUN apk add --no-cache \
     supervisor \
     nginx \
@@ -27,35 +27,35 @@ RUN apk add --no-cache \
     bcmath \
     intl
 
-# Instalar Composer
+# Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Definir el directorio de trabajo
+# Set the working directory
 WORKDIR /var/www/html
 
-# Copiar archivos de dependencias primero para optimizar la caché de capas de Docker
+# Copy the dependency files first to take advantage of the Docker layer cache
 COPY composer.json composer.lock ./
 
-# Instalar dependencias de PHP sin ejecutar scripts de post-instalación
+# Install PHP dependencies without running post-install scripts
 RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
 
-# Copiar el resto del código del microservicio
+# Copy the rest of the microservice code
 COPY . .
 
-# Generar el autoloader optimizado
+# Generate the optimized autoloader
 RUN composer dump-autoload --optimize
 
-# Configurar permisos requeridos por Laravel
+# Set the permissions Laravel needs
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
     && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-# Copiar configuraciones
+# Copy the configuration files
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/nginx.conf /etc/nginx/nginx.conf.template
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Exponer el puerto por defecto de Render
+# Expose Render's default port
 EXPOSE 10000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

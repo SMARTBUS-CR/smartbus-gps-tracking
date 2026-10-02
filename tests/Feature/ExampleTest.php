@@ -1,19 +1,14 @@
 <?php
 
-namespace Tests\Feature;
+use function Pest\Laravel\get;
+use function Pest\Laravel\getJson;
 
-// use Illuminate\Foundation\Testing\RefreshDatabase;
-use Tests\TestCase;
+it('redirects the root to the API docs (Scramble)', function () {
+    get('/')->assertRedirect(route('scramble.docs.ui'));
+});
 
-class ExampleTest extends TestCase
-{
-    /**
-     * A basic test example.
-     */
-    public function test_the_application_returns_a_successful_response(): void
-    {
-        $response = $this->get('/');
-
-        $response->assertStatus(200);
-    }
-}
+it('answers the health check ping', function () {
+    getJson('/api/ping')
+        ->assertOk()
+        ->assertExactJson(['service' => 'smartbus-gps', 'status' => 'ok']);
+});
