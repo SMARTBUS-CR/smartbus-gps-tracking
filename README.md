@@ -77,7 +77,7 @@ Flutter (conductor)  ──HTTP──▶  API Gateway  ──▶  ESTE microserv
 - **La autenticación NO se hace aquí.** La resuelve el API Gateway y reenvía la
   identidad en cabeceras `X-Auth-*` (ver [docs/GATEWAY.md](docs/GATEWAY.md)).
 - Flutter **nunca** llama directo a este servicio, siempre vía Gateway.
-- El mapa (tiles OpenStreetMap) lo dibuja Flutter; el routing (OpenRouteService) es
+- El mapa (OpenFreeMap + MapLibre) lo dibuja Flutter; el routing (OpenRouteService) es
   una integración futura (ver [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)).
 
 ---
@@ -211,7 +211,7 @@ docs/                                    ← documentación de arquitectura
 | [docs/CHANNELS.md](docs/CHANNELS.md) | Canal privado + autorización sin auth propia |
 | [docs/FLUTTER.md](docs/FLUTTER.md) | Contrato para la app (Echo, payload, reconexión) |
 | [docs/GATEWAY.md](docs/GATEWAY.md) | Contrato con el API Gateway |
-| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | OpenStreetMap / OpenRouteService (futuro) |
+| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Mapa (OpenFreeMap) / OpenRouteService (futuro) |
 | [docs/openapi.yaml](docs/openapi.yaml) | Especificación OpenAPI 3.1 |
 
 ---

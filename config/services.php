@@ -48,9 +48,10 @@ return [
     ],
 
     /*
-    | OpenStreetMap - map tiles. Consumed by FLUTTER directly.
-    | The backend only stores the URL in case the provider is centralized.
-    | Ver docs/INTEGRATIONS.md.
+    | OpenStreetMap - map tiles. NOT used by the app: Flutter renders the map with
+    | MapLibre + OpenFreeMap styles (configured in the Flutter app).
+    | Kept in case the backend ever has to tell the app which map provider to use.
+    | See docs/INTEGRATIONS.md.
     */
     'openstreetmap' => [
         'tile_url' => env('OSM_TILE_URL', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),

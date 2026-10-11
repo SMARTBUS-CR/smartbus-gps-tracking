@@ -1,14 +1,18 @@
-# Integraciones externas — OpenStreetMap y OpenRouteService
+# Integraciones externas — Mapa (OpenFreeMap) y OpenRouteService
 
-> **Estado: preparado, NO implementado.** Este documento define dónde vivirán para
-> que no acaben acopladas al `GpsLocationController`. No hay ninguna llamada HTTP real.
+> **Estado:**
+> - **Mapa: implementado en Flutter** (inicio del pasajero, MapLibre + OpenFreeMap).
+> - **OpenRouteService: preparado, NO implementado.** No hay ninguna llamada HTTP real.
+>
+> Este documento define dónde vive cada integración para que no acabe acoplada al
+> `GpsLocationController`.
 
 El microservicio GPS hace **una sola cosa**: recibir coordenadas (HU1) y distribuirlas
 por WebSocket (HU2/HU3). El mapa y los cálculos de ruta son otro problema.
 
 ```
                        ┌─────────────────────────────────────────┐
-   Flutter  ──tiles──▶ │  OpenStreetMap  (tile server)           │
+   Flutter  ──tiles──▶ │  OpenFreeMap  (tiles vectoriales, OSM)  │
                        └─────────────────────────────────────────┘
                                     ▲
                                     │  el backend NO participa
@@ -26,24 +30,57 @@ por WebSocket (HU2/HU3). El mapa y los cálculos de ruta son otro problema.
 
 ---
 
-## OpenStreetMap
+## Mapa — OpenFreeMap + MapLibre
 
-**Qué es:** proveedor de *tiles* (las imágenes del mapa).
+**Qué es:** el mapa base (calles, nombres, edificios) sobre el que Flutter dibuja la
+posición del usuario y, en próximas historias, rutas, paradas y buses. Los datos son de
+OpenStreetMap.
 
-**Quién lo usa:** **Flutter**, directamente (`flutter_map` / `TileLayer` apuntando a
-`OSM_TILE_URL`). El backend GPS **no** llama a OSM ni proxya tiles.
+**Proveedor: [OpenFreeMap](https://openfreemap.org)** (tiles **vectoriales** + estilos
+MapLibre). Se eligió porque es el único que cumple las dos condiciones del proyecto:
 
-**Qué hace el backend:** solo guardar la URL y la atribución en config, por si algún
-día se cambia de proveedor (MapTiler, Stadia, un tile server propio…) sin recompilar
-la app:
+| Requisito | OpenFreeMap |
+|---|---|
+| Gratis | ✅ Sin costo, **sin API key** ni registro |
+| Apto para producción | ✅ **Sin límite** de vistas/peticiones y **uso comercial permitido** |
+| Atribución | Obligatoria: `© OpenFreeMap · © OpenMapTiles · Datos de © OpenStreetMap` |
+| SLA | ❌ No tiene → la URL es configurable y OpenFreeMap se puede auto-hospedar |
 
-```php
-config('services.openstreetmap.tile_url')      // https://tile.openstreetmap.org/{z}/{x}/{y}.png
-config('services.openstreetmap.attribution')
-```
+Descartados:
+- **`tile.openstreetmap.org`** (tiles OSM estándar): su política de uso no ofrece ninguna
+  garantía, puede bloquear apps sin aviso y prohíbe guardar mapas offline.
+- **Google Maps**: requiere cuenta de facturación.
+- **MapTiler / CARTO / Stadia**: planes gratuitos con límites y condiciones de uso comercial.
 
-Si más adelante se quiere exponer esto a Flutter, sería un endpoint trivial de
-config (fuera del alcance de esta etapa).
+**Quién lo usa:** **Flutter**, directamente, con
+[`maplibre_gl`](https://pub.dev/packages/maplibre_gl) (librería oficial de MapLibre,
+render nativo). El backend GPS **no** llama al proveedor ni proxya tiles.
+
+| Modo | Proveedor | URL |
+|---|---|---|
+| Calles (claro y oscuro) | OpenFreeMap, estilo Liberty | `https://tiles.openfreemap.org/styles/liberty` |
+| Satélite | Esri World Imagery (⚠️ solo desarrollo / demo) | `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}` |
+
+- En **modo oscuro** se mantiene el mapa claro: el estilo "Dark" de OpenFreeMap no trae
+  lugares ni negocios.
+- **Satélite — pendiente para producción:** Esri da alta resolución (casas, calles; zoom 19)
+  y su endpoint público funciona sin API key, pero está bajo el *Esri Master License
+  Agreement*, que exige una cuenta de ArcGIS para apps en producción. Antes de producción:
+  - crear una cuenta (plan gratis) de ArcGIS Location Platform y usar su URL con token, **o**
+  - pasar a **EOX Sentinel-2 cloudless 2016** (gratis, sin key, CC BY 4.0, uso comercial
+    permitido), de menor resolución (útil hasta zoom ~14: barrios, no casas):
+    `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg`.
+    Solo la capa 2016 sirve (2018+ son CC BY-NC-SA; 2017 no tiene imagen de Costa Rica a
+    zoom alto).
+
+Las URLs se cambian sin recompilar código con `--dart-define=MAP_STYLE_URL=…` /
+`MAP_SATELLITE_TILES_URL=…` (repo Flutter: `lib/core/config/map_config.dart`, documentado
+en `lib/README.md`, sección 6).
+
+**Config del backend:** el bloque `services.openstreetmap` (`OSM_TILE_URL`,
+`OSM_ATTRIBUTION`) quedó de la etapa de preparación y **Flutter no lo usa**. Si algún día
+se quiere que el backend decida el estilo del mapa, sería un endpoint trivial de config
+que devuelva la URL del estilo (fuera del alcance actual).
 
 ---
 
@@ -101,9 +138,9 @@ config('services.openrouteservice.timeout')    // 5 s
 
 ## Resumen de responsabilidades
 
-| | OpenStreetMap | OpenRouteService |
+| | Mapa (OpenFreeMap) | OpenRouteService |
 |---|---|---|
-| Lo llama | Flutter | Backend (capa de servicio) / ETA µservice |
+| Lo llama | Flutter (`maplibre_gl`) | Backend (capa de servicio) / ETA µservice |
 | El GPS controller lo toca | nunca | nunca |
-| Estado hoy | solo config | solo config |
+| Estado hoy | **implementado** (inicio del pasajero) | solo config |
 | Acoplamiento previsto | ninguno (Flutter) | detrás de `RoutingProvider` |
