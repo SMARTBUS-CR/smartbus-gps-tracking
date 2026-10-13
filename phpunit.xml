@@ -36,7 +36,7 @@
         <env name="DB_USERNAME" value="smartbus" force="true"/>
         <env name="DB_PASSWORD" value="smartbus" force="true"/>
         <env name="DB_SSLMODE" value="disable" force="true"/>
-        <env name="AUTH_SERVICE_URL" value="https://smartbus-authentication.test" force="true"/>
+        <env name="GATEWAY_URL" value="https://smartbus-gateway.test" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

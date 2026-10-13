@@ -28,7 +28,6 @@ beforeEach(function () {
         'broadcasting.connections.reverb.key' => 'test-key',
         'broadcasting.connections.reverb.secret' => 'test-secret',
         'broadcasting.connections.reverb.app_id' => 'test-app',
-        'gateway.auth.url' => 'https://smartbus-authentication.test',
     ]);
 
     app(BroadcastManager::class)->purge();
@@ -36,8 +35,8 @@ beforeEach(function () {
 
     Cache::flush();
     Http::fake([
-        // The Authentication Service knows `passenger-token` and rejects any other token.
-        'https://smartbus-authentication.test/api/user*' => fn (ClientRequest $request) => $request->hasHeader('Authorization', 'Bearer passenger-token')
+        // The API Gateway knows `passenger-token` and rejects any other token.
+        GATEWAY_USER_URL.'*' => fn (ClientRequest $request) => $request->hasHeader('Authorization', 'Bearer passenger-token')
             ? Http::response(authServiceUser(PASSENGER_ID))
             : Http::response(['errors' => [['status' => '401']]], 401),
     ]);
@@ -97,7 +96,7 @@ it('denies a request that only carries spoofed identity headers', function () {
         ->assertForbidden();
 });
 
-it('denies a token rejected by the Authentication Service', function () {
+it('denies a token rejected by the API Gateway', function () {
     $trip = Trip::factory()->create();
 
     withToken('expired-token')

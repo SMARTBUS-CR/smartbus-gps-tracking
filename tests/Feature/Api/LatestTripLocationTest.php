@@ -11,6 +11,20 @@ use function Pest\Laravel\getJson;
 | before the next BusLocationUpdated event arrives).
 */
 
+beforeEach(function () {
+    // A passenger's token, recognized by the (fake) API Gateway.
+    actingAsGatewayUser('passenger-token', role: 'passenger');
+});
+
+it('rejects a request without a token with a JSON:API 401', function () {
+    $location = GpsLocation::factory()->create();
+    $this->defaultHeaders = []; // drop the passenger's token
+
+    getJson("/api/trips/{$location->trip_id}/location")
+        ->assertUnauthorized()
+        ->assertJsonPath('errors.0.status', '401');
+});
+
 it('returns the most recent reading of the trip as a JSON:API resource', function () {
     $trip = Trip::factory()->create();
 

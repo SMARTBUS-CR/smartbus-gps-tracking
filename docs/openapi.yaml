@@ -48,7 +48,7 @@ x-websocket:
     visibility: private
     authEndpoint: POST /api/gps/broadcasting/auth   # esta SI pasa por el Gateway
     authHeaders:
-      Authorization: Bearer <token> (el Gateway lo valida y lo reenvia; el GPS service resuelve el usuario con Auth GET /api/user)
+      Authorization: Bearer <token> (el Gateway lo valida y lo reenvia; el GPS service resuelve el usuario con el Gateway GET /api/auth/user)
     authorization: el token es valido segun el Authentication Service Y el viaje existe y esta en scheduled|in_progress
   event:
     name: BusLocationUpdated          # escuchar como ".BusLocationUpdated"

@@ -32,7 +32,7 @@ POST https://smartbus-api-gateway.onrender.com/api/gps/broadcasting/auth
    │     Authorization: Bearer <token>
    ▼
 GPS µservice  →  IdentifyFromGateway (middleware)
-   │  pregunta a Auth  GET /api/user?include=roles  con ese token
+   │  pregunta al Gateway  GET /api/auth/user?include=roles  con ese token
    │  (cacheado por token) y arma un GatewayUser { id, roles }
    ▼
 routes/channels.php  →  callback trip.{tripId}
@@ -43,7 +43,7 @@ routes/channels.php  →  callback trip.{tripId}
 
 - Middleware: [`app/Http/Middleware/IdentifyFromGateway.php`](../app/Http/Middleware/IdentifyFromGateway.php)
 - "Usuario": [`app/Support/Gateway/GatewayUser.php`](../app/Support/Gateway/GatewayUser.php) (no toca BD)
-- URL del Authentication Service y TTL de caché: [`config/gateway.php`](../config/gateway.php) (`AUTH_SERVICE_URL`)
+- URL del Gateway y TTL de caché: [`config/gateway.php`](../config/gateway.php) (`GATEWAY_URL`). El GPS service nunca llama a Auth directo.
 - Las cabeceras `X-User-*` se **ignoran**: la identidad sale solo del token, así que no se puede falsificar.
 - La ruta interna `/api/broadcasting/auth` (vía Gateway: `/api/gps/broadcasting/auth`)
   se registra en `bootstrap/app.php` → `withBroadcasting()` con prefijo `api` y **solo**

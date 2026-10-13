@@ -251,6 +251,6 @@ lo mismo con PHP 8.4 y un contenedor `postgis/postgis`.
 
 - **JSON:API** en todo: nunca respuestas JSON arbitrarias. Errores incluidos.
 - **Sin migraciones sobre la BD real.** La BD la administra otro equipo; `database/migrations-testing/` es solo para tests.
-- **Sin auth propia.** El Gateway valida el token y lo reenvía; el usuario se resuelve con Auth (`IdentifyFromGateway`).
+- **Sin auth propia y todo por el Gateway.** El Gateway valida el token y lo reenvía; el usuario se resuelve preguntándole al Gateway (`IdentifyFromGateway` → `GET /api/auth/user`), nunca a Auth directo. Todas las rutas salvo `/api/ping` exigen un token válido (`RequireGatewayUser`).
 - PostGIS: el orden es **(longitud, latitud)**. Centralizado en `HasLocationPoint`.
 - Código, comentarios y commits en **inglés**; estilo verificado con `pint --test`.

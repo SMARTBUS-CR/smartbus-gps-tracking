@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\GpsLocationController;
+use App\Http\Middleware\RequireGatewayUser;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -10,7 +11,8 @@ use Illuminate\Support\Facades\Route;
 | URL prefix: /api  (bootstrap/app.php -> apiPrefix).
 | Via the API Gateway: /api/gps/{path}  (the Gateway prepends the `gps` segment).
 | Middleware group: "api" + IdentifyFromGateway + NegotiatesJsonApi.
-| Authentication is handled by the API Gateway, NOT this microservice.
+| Authentication is handled by the API Gateway, NOT this microservice: every
+| route except /ping requires a token the Gateway recognizes (RequireGatewayUser).
 | Every response (errors included) follows the JSON:API standard.
 */
 
@@ -28,16 +30,18 @@ Route::get('/ping', function () {
     ]);
 })->name('gps.ping');
 
-/*
-| HU1 - Receive GPS coordinates.
-| JSON:API body: { "data": { "type": "gps-locations", "attributes": { ... } } }
-*/
-Route::post('/locations', [GpsLocationController::class, 'store'])
-    ->name('gps.locations.store');
+Route::middleware(RequireGatewayUser::class)->group(function () {
+    /*
+    | HU1 - Receive GPS coordinates.
+    | JSON:API body: { "data": { "type": "gps-locations", "attributes": { ... } } }
+    */
+    Route::post('/locations', [GpsLocationController::class, 'store'])
+        ->name('gps.locations.store');
 
-/*
-| HU3 - Latest known position of a trip (initial state of the passenger map,
-| before the next BusLocationUpdated event arrives).
-*/
-Route::get('/trips/{tripId}/location', [GpsLocationController::class, 'latestForTrip'])
-    ->name('gps.trips.location');
+    /*
+    | HU3 - Latest known position of a trip (initial state of the passenger map,
+    | before the next BusLocationUpdated event arrives).
+    */
+    Route::get('/trips/{tripId}/location', [GpsLocationController::class, 'latestForTrip'])
+        ->name('gps.trips.location');
+});

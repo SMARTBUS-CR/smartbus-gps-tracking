@@ -2,35 +2,39 @@
 
 /*
 |--------------------------------------------------------------------------
-| API Gateway / Authentication contract
+| API Gateway contract
 |--------------------------------------------------------------------------
 | The GPS microservice does NOT own users or tokens. The API Gateway validates
-| the client's  Authorization: Bearer <token>  against the Authentication
-| Service and then forwards the SAME header to this service (it does not
-| inject X-User-* headers).
+| the client's  Authorization: Bearer <token>  and forwards the SAME header to
+| this service (it does not inject X-User-* headers).
 |
-| When a request needs to know WHO the user is (e.g. channel authorization on
-| /api/broadcasting/auth), IdentifyFromGateway resolves the identity by asking
-| the Authentication Service:  GET {auth.url}/api/user?include=roles
-| with that Bearer token, and caches the answer per token.
+| To know WHO the user is, IdentifyFromGateway asks the API Gateway itself
+| (never the Authentication Service directly, so every auth check goes through
+| the Gateway):
 |
-| The identity is resolved lazily: routes that never call $request->user()
-| (e.g. POST /api/locations) never hit the Authentication Service.
+|     GET {identity.url}/api/auth/user?include=roles     Authorization: Bearer <token>
+|
+| The Gateway validates the token (validate.token) and proxies the request to
+| the Authentication Service. The answer is cached per token.
+|
+| Every API route except /api/ping requires a user (RequireGatewayUser), so a
+| request without a valid token gets a 401 even if it reaches this service
+| without going through the Gateway.
 */
 
 return [
 
-    'auth' => [
-        // Same env name the API Gateway uses for the Authentication Service.
-        'url' => env('AUTH_SERVICE_URL', 'http://localhost:8000'),
+    'identity' => [
+        // Base URL of the API Gateway (Render), e.g. https://smartbus-api-gateway-dev.onrender.com
+        'url' => env('GATEWAY_URL', 'http://localhost:8001'),
 
-        // Returns the token's user as JSON:API, with its roles as a relationship.
-        'user_path' => env('AUTH_SERVICE_USER_PATH', '/api/user?include=roles'),
+        // Gateway route that returns the token's user as JSON:API, with its roles.
+        'user_path' => env('GATEWAY_USER_PATH', '/api/auth/user?include=roles'),
 
-        'timeout' => (int) env('AUTH_SERVICE_TIMEOUT', 5),
+        'timeout' => (int) env('GATEWAY_TIMEOUT', 5),
 
         // Seconds a resolved identity is cached per token (only successes are cached).
-        'cache_ttl' => (int) env('AUTH_SERVICE_CACHE_TTL', 300),
+        'cache_ttl' => (int) env('GATEWAY_IDENTITY_CACHE_TTL', 300),
     ],
 
 ];

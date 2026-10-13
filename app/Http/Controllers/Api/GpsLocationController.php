@@ -23,6 +23,9 @@ use Symfony\Component\HttpFoundation\Response as HttpResponse;
 #[Group('GPS Locations', 'GPS readings of the buses. Every response follows the JSON:API standard (`application/vnd.api+json`).')]
 class GpsLocationController extends Controller
 {
+    /** JSON:API error document returned when the token is missing or invalid. */
+    private const UNAUTHORIZED_DOC = 'array{errors: list<array{status: string, title: string, detail: string}>}';
+
     public function __construct(
         private readonly GpsLocationService $service,
     ) {}
@@ -39,9 +42,12 @@ class GpsLocationController extends Controller
      *
      * Both are success responses for the driver's app.
      *
+     * Requires the user's Bearer token (validated through the API Gateway).
+     *
      * @requestMediaType application/vnd.api+json
      */
     #[ResponseDoc(202, 'Broadcast only, not persisted', mediaType: JsonApiErrors::MEDIA_TYPE, type: 'array{meta: array{persisted: false}}')]
+    #[ResponseDoc(401, 'Missing or invalid token', mediaType: JsonApiErrors::MEDIA_TYPE, type: self::UNAUTHORIZED_DOC)]
     public function store(StoreGpsLocationRequest $request): HttpResponse
     {
         $location = $this->service->record($request->toGpsFix());
@@ -65,9 +71,11 @@ class GpsLocationController extends Controller
      * Add `?include=trip` to embed the trip under `included`.
      *
      * Returns a JSON:API 404 when the trip does not exist or has no readings yet.
+     * Requires the user's Bearer token (validated through the API Gateway).
      *
      * @param  string  $tripId  UUID of the trip.
      */
+    #[ResponseDoc(401, 'Missing or invalid token', mediaType: JsonApiErrors::MEDIA_TYPE, type: self::UNAUTHORIZED_DOC)]
     public function latestForTrip(string $tripId): HttpResponse
     {
         // A non-UUID can never match a trip (and would make Postgres throw).

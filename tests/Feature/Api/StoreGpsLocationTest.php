@@ -25,7 +25,32 @@ beforeEach(function () {
     // Broadcasting is asserted explicitly; no test depends on Reverb running.
     Event::fake([BusLocationUpdated::class]);
 
+    // The driver's token, recognized by the (fake) API Gateway.
+    actingAsGatewayUser('driver-token', role: 'driver');
+
     $this->trip = Trip::factory()->create();
+});
+
+describe('authentication', function () {
+    it('rejects a request without a token with a JSON:API 401 and stores nothing', function () {
+        $this->defaultHeaders = []; // drop the driver's token
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+            ->assertUnauthorized()
+            ->assertHeader('Content-Type', 'application/vnd.api+json')
+            ->assertJsonPath('errors.0.status', '401');
+
+        expect(GpsLocation::query()->count())->toBe(0);
+        Event::assertNotDispatched(BusLocationUpdated::class);
+    });
+
+    it('rejects a token the API Gateway does not recognize', function () {
+        $this->withToken('stolen-or-expired-token');
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertUnauthorized();
+
+        expect(GpsLocation::query()->count())->toBe(0);
+    });
 });
 
 it('stores a valid GPS reading and returns a JSON:API resource', function () {

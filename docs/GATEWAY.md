@@ -52,19 +52,29 @@ reenvía **la misma** cabecera `Authorization` al microservicio (no inyecta `X-U
 ```
 Flutter ──Authorization: Bearer <token>──▶ Gateway ──valida con Auth──▶ GPS µservice
                                                                         │
-                                   (solo si la ruta necesita el usuario) ▼
-                                          Auth  GET /api/user?include=roles
+                                          ¿de quién es el token?        ▼
+                              Gateway  GET /api/auth/user?include=roles  (valida y reenvía a Auth)
 ```
 
-- **Todas** las rutas `/api/gps/*` requieren token válido en el Gateway.
-- El GPS service resuelve **quién** es el usuario con `IdentifyFromGateway`: manda el
-  mismo Bearer token a Auth `GET /api/user?include=roles` y arma un `GatewayUser { id, roles }`.
-  - Es **perezoso**: solo llama a Auth cuando algo pide `$request->user()` (hoy, la
-    autorización del canal en `/api/broadcasting/auth`). `POST /api/locations` no llama a Auth.
-  - Se **cachea** por token (`AUTH_SERVICE_CACHE_TTL`, 300 s por defecto). Los errores no se cachean.
-  - Cualquier `X-User-*` que venga del cliente se **ignora**: la identidad no se puede falsificar.
+**Todo pasa por el Gateway:** el GPS service **nunca** llama al Authentication Service directo.
 
-Configuración en [`config/gateway.php`](../config/gateway.php) (env `AUTH_SERVICE_URL`).
+- **Todas** las rutas `/api/gps/*` requieren token válido en el Gateway, y además el GPS
+  service las protege por su cuenta (`RequireGatewayUser`): **sin un token que el Gateway
+  reconozca → 401 JSON:API**, aunque alguien llame al servicio directo en Render.
+  Única excepción: `/api/ping`.
+- El GPS service resuelve **quién** es el usuario con `IdentifyFromGateway`: manda el
+  mismo Bearer token al Gateway `GET /api/auth/user?include=roles` (la misma ruta que usa
+  Flutter) y arma un `GatewayUser { id, roles }`.
+  - Es **perezoso**: solo consulta cuando algo pide `$request->user()`.
+  - Se **cachea** por token (`GATEWAY_IDENTITY_CACHE_TTL`, 300 s por defecto). Los errores
+    no se cachean. Un conductor que envía GPS cada 5 s genera ~12 consultas por hora.
+  - Cualquier `X-User-*` que venga del cliente se **ignora**: la identidad no se puede falsificar.
+- ⚠️ Las consultas del GPS al Gateway salen todas desde el mismo servidor y cuentan para
+  el límite `throttle:api` del Gateway (60/min). Con la caché alcanza para ~300 usuarios
+  distintos cada 5 minutos; si el proyecto crece, hay que subir ese límite en el Gateway.
+
+Configuración en [`config/gateway.php`](../config/gateway.php) (env `GATEWAY_URL`,
+`GATEWAY_USER_PATH`, `GATEWAY_TIMEOUT`, `GATEWAY_IDENTITY_CACHE_TTL`).
 
 ---
 
