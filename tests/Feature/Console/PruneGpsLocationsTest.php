@@ -1,98 +1,44 @@
 <?php
 
-namespace Tests\Feature\Console;
-
 use App\Models\GpsLocation;
 use App\Models\Trip;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
-use Illuminate\Support\Carbon;
-use Tests\TestCase;
 
-/**
- * Housekeeping command that prunes old gps_locations of finished trips
- * (config/gps.php). Does not touch HU1 ingestion — see
- * tests/Feature/Api/StoreGpsLocationTest.php for that contract.
- *
- * No migrations: uses the real operations DB (pgsql from .env), every test
- * runs inside a rolled-back transaction (DatabaseTransactions), same as
- * StoreGpsLocationTest.
- */
-class PruneGpsLocationsTest extends TestCase
-{
-    use DatabaseTransactions;
+use function Pest\Laravel\artisan;
+use function Pest\Laravel\assertModelExists;
+use function Pest\Laravel\assertModelMissing;
 
-    private Trip $trip;
+/*
+| Housekeeping command that prunes old gps_locations of finished trips
+| (config/gps.php). It never touches HU1 ingestion.
+*/
 
-    protected function setUp(): void
-    {
-        parent::setUp();
+it('deletes old readings of a finished trip but keeps recent ones', function () {
+    $trip = Trip::factory()->completed(now()->subDays(200))->create();
 
-        $trip = Trip::query()->first();
-        if ($trip === null) {
-            $this->markTestSkipped('The operations DB has no trips to test against.');
-        }
-        $this->trip = $trip;
-    }
+    $old = GpsLocation::factory()->for($trip)->create(['recorded_at' => now()->subDays(90)]);
+    $recent = GpsLocation::factory()->for($trip)->create(['recorded_at' => now()->subDay()]);
 
-    public function test_deletes_old_readings_of_a_finished_trip_but_keeps_recent_ones(): void
-    {
-        $this->trip->forceFill(['completed_at' => Carbon::now()->subDays(200)])->save();
+    artisan('gps:prune-locations', ['--days' => 60])->assertExitCode(0);
 
-        $old = GpsLocation::create([
-            'trip_id' => $this->trip->id,
-            'latitude' => 9.93,
-            'longitude' => -84.08,
-            'speed_kmh' => 20,
-            'recorded_at' => Carbon::now()->subDays(90),
-        ]);
-        $recent = GpsLocation::create([
-            'trip_id' => $this->trip->id,
-            'latitude' => 9.93,
-            'longitude' => -84.08,
-            'speed_kmh' => 20,
-            'recorded_at' => Carbon::now()->subDays(1),
-        ]);
+    assertModelMissing($old);
+    assertModelExists($recent);
+});
 
-        $this->artisan('gps:prune-locations', ['--days' => 60])
-            ->assertExitCode(0);
+it('never prunes readings of a trip still in progress', function () {
+    $veryOld = GpsLocation::factory()
+        ->for(Trip::factory())
+        ->create(['recorded_at' => now()->subDays(400)]);
 
-        $this->assertModelMissing($old);
-        $this->assertModelExists($recent);
-    }
+    artisan('gps:prune-locations', ['--days' => 60])->assertExitCode(0);
 
-    public function test_never_prunes_readings_of_a_trip_still_in_progress(): void
-    {
-        $this->trip->forceFill(['completed_at' => null])->save();
+    assertModelExists($veryOld);
+});
 
-        $veryOld = GpsLocation::create([
-            'trip_id' => $this->trip->id,
-            'latitude' => 9.93,
-            'longitude' => -84.08,
-            'speed_kmh' => 20,
-            'recorded_at' => Carbon::now()->subDays(400),
-        ]);
+it('only reports on a dry run, without deleting', function () {
+    $trip = Trip::factory()->completed(now()->subDays(200))->create();
+    $old = GpsLocation::factory()->for($trip)->create(['recorded_at' => now()->subDays(90)]);
 
-        $this->artisan('gps:prune-locations', ['--days' => 60])
-            ->assertExitCode(0);
+    artisan('gps:prune-locations', ['--days' => 60, '--dry-run' => true])->assertExitCode(0);
 
-        $this->assertModelExists($veryOld);
-    }
-
-    public function test_dry_run_reports_without_deleting(): void
-    {
-        $this->trip->forceFill(['completed_at' => Carbon::now()->subDays(200)])->save();
-
-        $old = GpsLocation::create([
-            'trip_id' => $this->trip->id,
-            'latitude' => 9.93,
-            'longitude' => -84.08,
-            'speed_kmh' => 20,
-            'recorded_at' => Carbon::now()->subDays(90),
-        ]);
-
-        $this->artisan('gps:prune-locations', ['--days' => 60, '--dry-run' => true])
-            ->assertExitCode(0);
-
-        $this->assertModelExists($old);
-    }
-}
+    assertModelExists($old);
+});

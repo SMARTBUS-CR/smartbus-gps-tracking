@@ -27,11 +27,11 @@ class BusLocationUpdated implements ShouldBroadcast
     use Dispatchable, InteractsWithSockets;
 
     /** Null when this fix was broadcast but not persisted (see class docblock). */
-    public ?int $locationId;
+    public ?string $locationId;
 
-    public int $tripId;
+    public string $tripId;
 
-    public int $busId;
+    public string $busId;
 
     public float $latitude;
 
@@ -48,9 +48,9 @@ class BusLocationUpdated implements ShouldBroadcast
         $location->loadMissing('trip');
 
         // Unsaved (transient) model: this fix was broadcast but not persisted.
-        $this->locationId = $location->exists ? (int) $location->id : null;
-        $this->tripId = (int) $location->trip_id;
-        $this->busId = (int) $location->trip->bus_id;
+        $this->locationId = $location->exists ? $location->id : null;
+        $this->tripId = $location->trip_id;
+        $this->busId = $location->trip->bus_id;
         $this->latitude = (float) $location->latitude;
         $this->longitude = (float) $location->longitude;
         $this->speedKmh = $location->speed_kmh !== null ? (float) $location->speed_kmh : null;

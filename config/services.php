@@ -37,7 +37,7 @@ return [
 
     /*
     | OpenRouteService - ruta / distancia / matriz. Integracion FUTURA.
-    | Se consumira detras de una capa de servicio, nunca desde un controller.
+    | It will be consumed behind a service layer, never from a controller.
     | Ver docs/INTEGRATIONS.md.
     */
     'openrouteservice' => [
@@ -48,9 +48,10 @@ return [
     ],
 
     /*
-    | OpenStreetMap - tiles del mapa. Lo consume FLUTTER directamente.
-    | El backend solo guarda la URL por si se centraliza el proveedor.
-    | Ver docs/INTEGRATIONS.md.
+    | OpenStreetMap - map tiles. NOT used by the app: Flutter renders the map with
+    | MapLibre + OpenFreeMap styles (configured in the Flutter app).
+    | Kept in case the backend ever has to tell the app which map provider to use.
+    | See docs/INTEGRATIONS.md.
     */
     'openstreetmap' => [
         'tile_url' => env('OSM_TILE_URL', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),

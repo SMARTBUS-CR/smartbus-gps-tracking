@@ -77,7 +77,7 @@ Flutter (conductor)  ──HTTP──▶  API Gateway  ──▶  ESTE microserv
 - **La autenticación NO se hace aquí.** La resuelve el API Gateway y reenvía la
   identidad en cabeceras `X-Auth-*` (ver [docs/GATEWAY.md](docs/GATEWAY.md)).
 - Flutter **nunca** llama directo a este servicio, siempre vía Gateway.
-- El mapa (tiles OpenStreetMap) lo dibuja Flutter; el routing (OpenRouteService) es
+- El mapa (OpenFreeMap + MapLibre) lo dibuja Flutter; el routing (OpenRouteService) es
   una integración futura (ver [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)).
 
 ---
@@ -211,7 +211,7 @@ docs/                                    ← documentación de arquitectura
 | [docs/CHANNELS.md](docs/CHANNELS.md) | Canal privado + autorización sin auth propia |
 | [docs/FLUTTER.md](docs/FLUTTER.md) | Contrato para la app (Echo, payload, reconexión) |
 | [docs/GATEWAY.md](docs/GATEWAY.md) | Contrato con el API Gateway |
-| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | OpenStreetMap / OpenRouteService (futuro) |
+| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Mapa (OpenFreeMap) / OpenRouteService (futuro) |
 | [docs/openapi.yaml](docs/openapi.yaml) | Especificación OpenAPI 3.1 |
 
 ---
@@ -225,15 +225,32 @@ docs/                                    ← documentación de arquitectura
 Todas las **rutas HTTP** que necesitan las 3 HU están implementadas. Falta la lógica
 de negocio de cada HU y sus tests.
 
-Los tests de las HU se implementan junto con cada historia (`phpunit.xml` aún apunta a
-sqlite `:memory:` — definir la estrategia de BD de test).
+---
+
+## Tests (Pest)
+
+Los tests **nunca** usan la BD de operaciones (Aiven). Corren contra una BD PostgreSQL +
+PostGIS desechable, con el esquema de `database/migrations-testing/` (copia del esquema
+real, solo para tests) y datos de `database/factories/`.
+
+```bash
+docker compose -f docker-compose.testing.yml up -d   # BD de test en el puerto 54329
+docker compose -f docker-compose.testing.yml down    # se apaga 
+php artisan test                                     # o: php artisan test --parallel
+vendor/bin/pint --test                               # estilo de código
+php artisan scramble:analyze                         # documentación OpenAPI válida
+```
+
+`tests/TestCase.php` se niega a correr si la conexión no apunta a `127.0.0.1/*_testing`
+(`RefreshDatabase` borra todas las tablas). El CI (`.github/workflows/ci-cd.yml`) corre
+lo mismo con PHP 8.4 y un contenedor `postgis/postgis`.
 
 ---
 
 ## Convenciones
 
 - **JSON:API** en todo: nunca respuestas JSON arbitrarias. Errores incluidos.
-- **Sin migraciones.** La BD la administra otro equipo.
-- **Sin auth propia.** Identidad vía Gateway (`X-Auth-*`).
+- **Sin migraciones sobre la BD real.** La BD la administra otro equipo; `database/migrations-testing/` es solo para tests.
+- **Sin auth propia y todo por el Gateway.** El Gateway valida el token y lo reenvía; el usuario se resuelve preguntándole al Gateway (`IdentifyFromGateway` → `GET /api/auth/user`), nunca a Auth directo. Todas las rutas salvo `/api/ping` exigen un token válido (`RequireGatewayUser`).
 - PostGIS: el orden es **(longitud, latitud)**. Centralizado en `HasLocationPoint`.
-- Verificación de código que escribe en BD: `INSERT` dentro de transacción + `rollBack`.
+- Código, comentarios y commits en **inglés**; estilo verificado con `pint --test`.

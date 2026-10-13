@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use Database\Factories\RouteFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,8 +14,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * Note: the class name collides with the Illuminate\Support\Facades\Route
  * facade. Always import App\Models\Route explicitly where the model is needed.
  *
- * @property int $id
- * @property int $company_id
+ * @property string $id
+ * @property string $company_id
  * @property string $code
  * @property string $name
  * @property string $origin
@@ -22,14 +24,23 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class Route extends Model
 {
+    /** @use HasFactory<RouteFactory> */
+    use HasFactory;
+
     protected $table = 'routes';
+
+    /**
+     * The PK is a UUID (string), not an autoincrement.
+     */
+    public $incrementing = false;
+
+    protected $keyType = 'string';
 
     protected $guarded = ['id'];
 
     protected function casts(): array
     {
         return [
-            'company_id' => 'integer',
             'distance_km' => 'decimal:2',
             'is_active' => 'boolean',
         ];

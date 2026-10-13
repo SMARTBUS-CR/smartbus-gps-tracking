@@ -14,7 +14,7 @@ use Illuminate\Validation\Rule;
  *     "data": {
  *       "type": "gps-locations",
  *       "attributes": {
- *         "trip_id": 25,
+ *         "trip_id": "01a09332-3457-7315-885e-4ebb218f7262",
  *         "latitude": 10.4631,
  *         "longitude": -83.9921,
  *         "speed_kmh": 38.5,
@@ -41,15 +41,52 @@ class StoreGpsLocationRequest extends FormRequest
      */
     public function rules(): array
     {
+        // Note: `uuid` + `bail` on trip_id keep a non-UUID away from the `exists` query
+        // (Postgres would throw "invalid input syntax for type uuid" instead of a 422).
         return [
             'data' => ['required', 'array'],
+
+            /**
+             * JSON:API resource type.
+             *
+             * @example gps-locations
+             */
             'data.type' => ['required', 'string', Rule::in(['gps-locations'])],
             'data.attributes' => ['required', 'array'],
 
-            'data.attributes.trip_id' => ['required', 'integer', 'exists:trips,id'],
+            /**
+             * UUID of the trip the reading belongs to. The trip must exist.
+             *
+             * @example 01a09332-3457-7315-885e-4ebb218f7262
+             */
+            'data.attributes.trip_id' => ['bail', 'required', 'uuid', 'exists:trips,id'],
+
+            /**
+             * Latitude in decimal degrees (WGS 84).
+             *
+             * @example 9.9281
+             */
             'data.attributes.latitude' => ['required', 'numeric', 'between:-90,90'],
+
+            /**
+             * Longitude in decimal degrees (WGS 84).
+             *
+             * @example -84.0907
+             */
             'data.attributes.longitude' => ['required', 'numeric', 'between:-180,180'],
+
+            /**
+             * Speed reported by the device, in km/h.
+             *
+             * @example 38.5
+             */
             'data.attributes.speed_kmh' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:400'],
+
+            /**
+             * When the device took the reading (ISO 8601). Stored in UTC.
+             *
+             * @example 2026-09-03T15:00:00Z
+             */
             'data.attributes.recorded_at' => ['required', 'date'],
         ];
     }

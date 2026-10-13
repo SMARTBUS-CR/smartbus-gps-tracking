@@ -78,7 +78,7 @@ class GpsLocationService
         return $distanceMeters >= (float) config('gps.persist_min_distance_meters');
     }
 
-    private function lastPersistedFor(int $tripId): ?GpsLocation
+    private function lastPersistedFor(string $tripId): ?GpsLocation
     {
         return GpsLocation::query()
             ->where('trip_id', $tripId)
@@ -109,7 +109,7 @@ class GpsLocationService
      * @throws ModelNotFoundException when the trip
      *                                does not exist or has no readings yet; the controller maps it to 404.
      */
-    public function latestForTrip(int $tripId): GpsLocation
+    public function latestForTrip(string $tripId): GpsLocation
     {
         return GpsLocation::query()
             ->where('trip_id', $tripId)

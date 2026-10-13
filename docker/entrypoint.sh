@@ -1,15 +1,15 @@
 #!/bin/sh
 set -e
 
-# Usar puerto 10000 si Render no inyecta la variable PORT
+# Use port 10000 if Render does not inject the PORT variable
 export PORT="${PORT:-10000}"
 
 echo "=== Preparando microservicio GPS Tracking ==="
 
-# Generar la configuración de Nginx reemplazando $PORT dinámicamente
+# Generate the Nginx configuration replacing $PORT dynamically
 envsubst '$PORT' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
-# Optimización de cachés de Laravel
+# Build the Laravel caches
 php artisan config:cache
 php artisan route:cache
 php artisan event:cache
