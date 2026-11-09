@@ -7,65 +7,46 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-
-// User is intentionally not imported: the `users` table does not live in this DB
-// (it belongs to the Auth microservice).
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
- * Existing `drivers` table (NOT managed by this service).
+ * `drivers` table, owned by the Dashboard. A driver is the employment of an Auth
+ * user in ONE company: `user_id` is unique per company, so the same person can
+ * be a driver in several companies. To know whether a user drives a trip, start
+ * from the trip (`trips.driver_id` -> `drivers.user_id`), never from the user.
  *
- * Columns (see docs/DATABASE.md):
- *   id          uuid    (PK, no autoincrement, no DB default)
- *   user_id     uuid    UNIQUE  -> opaque id from the Auth microservice (there is
- *                                 no `users` table and no FK here). Exposed as-is
- *                                 as a plain attribute.
- *   company_id  uuid    -> FK companies.id
- *   license     varchar(30)
- *   status      varchar(20)  default 'active'
- *   created_at / updated_at
+ * There is no user() relationship: `users` lives in the Auth microservice.
  *
  * @property string $id
- * @property string $user_id
  * @property string $company_id
+ * @property string $user_id
  * @property string $license
  * @property string $status
  */
 class Driver extends Model
 {
     /** @use HasFactory<DriverFactory> */
-    use HasFactory;
+    use HasFactory, SoftDeletes;
+
+    public const STATUS_ACTIVE = 'active';
 
     protected $table = 'drivers';
 
-    /**
-     * The PK is a UUID (string), not an autoincrement.
-     */
     public $incrementing = false;
 
     protected $keyType = 'string';
 
-    protected $fillable = [
-        'id',
-        'user_id',
-        'company_id',
-        'license',
-        'status',
-    ];
+    /** GPS never writes drivers. */
+    protected $guarded = ['*'];
 
-    /*
-     * NOTE: this microservice does NOT create drivers (another team owns them).
-     * If generating the UUID on insert is ever needed, add:
-     *
-     *   use Illuminate\Database\Eloquent\Concerns\HasUuids;
-     *   use HasUuids;
-     *
-     * after checking the UUID version matches the one the DB team uses.
-     *
-     * There is deliberately no user() relationship: the `users` table lives in
-     * the Auth microservice's DB. `user_id` is exposed as a plain attribute
-     * and whoever needs the user data (Gateway / frontend / Auth service)
-     * resolves it.
-     */
+    protected function casts(): array
+    {
+        return [
+            'license_expires_at' => 'date',
+            'employment_starts_on' => 'date',
+            'employment_ends_on' => 'date',
+        ];
+    }
 
     /**
      * @return BelongsTo<Company, $this>
