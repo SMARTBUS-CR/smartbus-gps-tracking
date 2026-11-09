@@ -83,6 +83,13 @@ class StoreGpsLocationRequest extends FormRequest
             'data.attributes.speed_kmh' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:400'],
 
             /**
+             * Accuracy radius reported by the device, in meters (optional).
+             *
+             * @example 8.5
+             */
+            'data.attributes.accuracy_meters' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100000'],
+
+            /**
              * When the device took the reading (ISO 8601). Stored in UTC.
              *
              * @example 2026-09-03T15:00:00Z
@@ -106,6 +113,7 @@ class StoreGpsLocationRequest extends FormRequest
             'data.attributes.latitude' => 'latitude',
             'data.attributes.longitude' => 'longitude',
             'data.attributes.speed_kmh' => 'speed_kmh',
+            'data.attributes.accuracy_meters' => 'accuracy_meters',
             'data.attributes.recorded_at' => 'recorded_at',
         ];
     }
