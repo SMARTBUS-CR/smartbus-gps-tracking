@@ -26,6 +26,9 @@ const GATEWAY_URL = 'https://smartbus-gateway.test';
 /** Gateway route that resolves the user of a token (config gateway.identity). */
 const GATEWAY_USER_URL = GATEWAY_URL.'/api/auth/user';
 
+/** Auth user id of actingAsGatewayUser() by default. */
+const TEST_USER_ID = '01a0c691-579f-731c-a034-03cc8fe8136f';
+
 /**
  * JSON:API body of POST /api/locations.
  *
@@ -79,7 +82,7 @@ function authServiceUser(string $id, string $role = 'passenger'): array
  */
 function actingAsGatewayUser(
     string $token = 'test-token',
-    string $userId = '01a0c691-579f-731c-a034-03cc8fe8136f',
+    string $userId = TEST_USER_ID,
     string $role = 'driver',
 ): void {
     Http::fake([
