@@ -3,6 +3,7 @@
 use App\Events\BusLocationUpdated;
 use App\Models\GpsLocation;
 use App\Models\Trip;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
@@ -25,10 +26,93 @@ beforeEach(function () {
     // Broadcasting is asserted explicitly; no test depends on Reverb running.
     Event::fake([BusLocationUpdated::class]);
 
-    // The driver's token, recognized by the (fake) API Gateway.
+    // The driver's token, recognized by the (fake) API Gateway...
     actingAsGatewayUser('driver-token', role: 'driver');
 
-    $this->trip = Trip::factory()->create();
+    // ...on a trip in progress assigned to that driver.
+    $this->trip = Trip::factory()->drivenBy(TEST_USER_ID)->create();
+});
+
+describe('authorization (only the assigned driver, only while in progress)', function () {
+    it('rejects a driver who is not assigned to the trip with a JSON:API 403', function () {
+        $otherDriversTrip = Trip::factory()->create();
+
+        postJson(STORE_URL, gpsLocationPayload($otherDriversTrip->id))
+            ->assertForbidden()
+            ->assertHeader('Content-Type', 'application/vnd.api+json')
+            ->assertJsonPath('errors.0.status', '403');
+
+        expect(GpsLocation::query()->count())->toBe(0);
+        Event::assertNotDispatched(BusLocationUpdated::class);
+    });
+
+    it('rejects the assigned driver when their driver profile is inactive', function () {
+        $this->trip->driver->forceFill(['status' => 'inactive'])->save();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertForbidden();
+
+        expect(GpsLocation::query()->count())->toBe(0);
+    });
+
+    it('rejects readings of a trip that is not in progress with a JSON:API 409', function (string $state) {
+        $trip = Trip::factory()->drivenBy(TEST_USER_ID)->{$state}()->create();
+
+        postJson(STORE_URL, gpsLocationPayload($trip->id))
+            ->assertConflict()
+            ->assertJsonPath('errors.0.status', '409');
+
+        expect(GpsLocation::query()->count())->toBe(0);
+        Event::assertNotDispatched(BusLocationUpdated::class);
+    })->with(['scheduled', 'completed', 'cancelled']);
+});
+
+describe('order (a late reading never moves the bus back)', function () {
+    it('ignores a reading taken before the current position', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:05:00Z']))
+            ->assertCreated();
+
+        // Arrives now, but was taken 5 minutes before the current position.
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, [
+            'latitude' => 9.95,
+            'recorded_at' => '2026-09-07T12:00:00Z',
+        ]))
+            ->assertAccepted()
+            ->assertJsonPath('meta.persisted', false)
+            ->assertJsonPath('meta.outcome', 'stale');
+
+        expect(GpsLocation::query()->count())->toBe(1);
+        Event::assertDispatchedTimes(BusLocationUpdated::class, 1);
+    });
+
+    it('ignores a duplicate of the current position', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertCreated();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+            ->assertAccepted()
+            ->assertJsonPath('meta.outcome', 'duplicate');
+
+        expect(GpsLocation::query()->count())->toBe(1);
+        Event::assertDispatchedTimes(BusLocationUpdated::class, 1);
+    });
+
+    it('still detects duplicates after the cache is lost (unique trip_id + recorded_at)', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertCreated();
+        Cache::flush();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+            ->assertAccepted()
+            ->assertJsonPath('meta.outcome', 'duplicate');
+
+        expect(GpsLocation::query()->count())->toBe(1);
+    });
+});
+
+it('stores the accuracy reported by the device', function () {
+    postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['accuracy_meters' => 8.5]))
+        ->assertCreated()
+        ->assertJsonPath('data.attributes.accuracy_meters', 8.5);
+
+    expect(GpsLocation::query()->sole()->accuracy_meters)->toBe(8.5);
 });
 
 describe('authentication', function () {
@@ -157,7 +241,8 @@ describe('persist filter (transmit != persist)', function () {
             ->assertAccepted()
             ->assertHeader('Content-Type', 'application/vnd.api+json')
             ->assertJsonMissingPath('data')
-            ->assertJsonPath('meta.persisted', false);
+            ->assertJsonPath('meta.persisted', false)
+            ->assertJsonPath('meta.outcome', 'broadcast_only');
 
         expect(GpsLocation::query()->where('trip_id', $this->trip->id)->count())->toBe(1);
 
