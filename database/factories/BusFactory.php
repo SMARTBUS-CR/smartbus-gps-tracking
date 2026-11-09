@@ -20,8 +20,9 @@ class BusFactory extends Factory
         return [
             'id' => (string) Str::uuid7(),
             'company_id' => Company::factory(),
-            'plate_number' => Str::upper(fake()->unique()->bothify('???-###')),
-            'unit_number' => (string) fake()->numberBetween(1, 999),
+            'country_code' => 'CR',
+            'plate_number' => Str::upper(fake()->unique()->bothify('???-####')),
+            'unit_number' => (string) fake()->unique()->numberBetween(1, 99999),
             'capacity' => 40,
             'is_active' => true,
         ];
