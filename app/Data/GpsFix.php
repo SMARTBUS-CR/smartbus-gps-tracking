@@ -19,6 +19,7 @@ final readonly class GpsFix
         public float $longitude,
         public ?float $speedKmh,
         public CarbonImmutable $recordedAt,
+        public ?float $accuracyMeters = null,
     ) {}
 
     /**
@@ -27,6 +28,7 @@ final readonly class GpsFix
      *     latitude: int|float|string,
      *     longitude: int|float|string,
      *     speed_kmh?: int|float|string|null,
+     *     accuracy_meters?: int|float|string|null,
      *     recorded_at: string
      * } $attributes  JSON:API attributes already validated.
      */
@@ -38,6 +40,7 @@ final readonly class GpsFix
             longitude: (float) $attributes['longitude'],
             speedKmh: isset($attributes['speed_kmh']) ? (float) $attributes['speed_kmh'] : null,
             recordedAt: CarbonImmutable::parse($attributes['recorded_at'])->utc(),
+            accuracyMeters: isset($attributes['accuracy_meters']) ? (float) $attributes['accuracy_meters'] : null,
         );
     }
 
@@ -54,6 +57,7 @@ final readonly class GpsFix
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
             'speed_kmh' => $this->speedKmh,
+            'accuracy_meters' => $this->accuracyMeters,
             'recorded_at' => $this->recordedAt,
         ];
     }
