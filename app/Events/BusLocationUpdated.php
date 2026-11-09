@@ -39,6 +39,8 @@ class BusLocationUpdated implements ShouldBroadcast
 
     public ?float $speedKmh;
 
+    public ?float $accuracyMeters;
+
     /** ISO-8601 in UTC, e.g. "2026-09-03T15:00:00.000000Z". */
     public string $recordedAt;
 
@@ -54,6 +56,7 @@ class BusLocationUpdated implements ShouldBroadcast
         $this->latitude = (float) $location->latitude;
         $this->longitude = (float) $location->longitude;
         $this->speedKmh = $location->speed_kmh !== null ? (float) $location->speed_kmh : null;
+        $this->accuracyMeters = $location->accuracy_meters !== null ? (float) $location->accuracy_meters : null;
         $this->recordedAt = $location->recorded_at->toISOString();
     }
 
@@ -92,6 +95,7 @@ class BusLocationUpdated implements ShouldBroadcast
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
             'speed_kmh' => $this->speedKmh,
+            'accuracy_meters' => $this->accuracyMeters,
             'recorded_at' => $this->recordedAt,
         ];
     }
