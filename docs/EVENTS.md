@@ -1,5 +1,14 @@
 # Eventos del microservicio GPS
 
+Todos se emiten en el canal privado `trip.{tripId}` (ver [CHANNELS.md](CHANNELS.md)).
+
+| Evento | Cuándo | Payload |
+|---|---|---|
+| `BusLocationUpdated` | El conductor asignado envía una lectura aceptada (más nueva que la actual) | `id`, `trip_id`, `bus_id`, `latitude`, `longitude`, `speed_kmh`, `accuracy_meters`, `recorded_at` |
+| `TripTrackingEnded` | El conductor termina el viaje (`POST /trips/{id}/finish`) | `trip_id`, `status` (`completed`), `ended_at` |
+
+Las lecturas **duplicadas o atrasadas** no se emiten: el mapa nunca retrocede.
+
 ## BusLocationUpdated
 
 Ubicación: [`app/Events/BusLocationUpdated.php`](../app/Events/BusLocationUpdated.php)
