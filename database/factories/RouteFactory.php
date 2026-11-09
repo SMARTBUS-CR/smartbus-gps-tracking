@@ -20,11 +20,8 @@ class RouteFactory extends Factory
         return [
             'id' => (string) Str::uuid7(),
             'company_id' => Company::factory(),
-            'code' => Str::upper(fake()->bothify('R-###')),
+            'code' => Str::upper(fake()->unique()->bothify('R-###??')),
             'name' => fake()->city().' - '.fake()->city(),
-            'origin' => fake()->city(),
-            'destination' => fake()->city(),
-            'is_active' => true,
         ];
     }
 }
