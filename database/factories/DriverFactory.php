@@ -19,11 +19,18 @@ class DriverFactory extends Factory
     {
         return [
             'id' => (string) Str::uuid7(),
+            'company_id' => Company::factory(),
             // Opaque id of the Auth microservice user.
             'user_id' => (string) Str::uuid7(),
-            'company_id' => Company::factory(),
-            'license' => Str::upper(fake()->bothify('LIC-########')),
-            'status' => 'active',
+            'license' => Str::upper(fake()->unique()->bothify('LIC-########')),
+            'license_expires_at' => now()->addYears(2)->toDateString(),
+            'employment_starts_on' => now()->subYear()->toDateString(),
+            'status' => Driver::STATUS_ACTIVE,
         ];
+    }
+
+    public function inactive(): static
+    {
+        return $this->state(fn (): array => ['status' => 'inactive']);
     }
 }
