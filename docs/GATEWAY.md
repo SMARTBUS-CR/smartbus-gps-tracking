@@ -33,8 +33,10 @@ Este servicio **no** implementa otro gateway. Solo se configura para vivir detr�
 
 | Método | Vía Gateway (lo que llama Flutter) | Ruta interna | Quién lo usa |
 |---|---|---|---|
-| `POST` | `/api/gps/locations` | `/api/locations` | app del **conductor** — envía coordenadas (HU1) |
-| `GET`  | `/api/gps/trips/{tripId}/location` | `/api/trips/{tripId}/location` | app del **pasajero** — posición actual al abrir el mapa (HU3) |
+| `POST` | `/api/gps/trips/{tripId}/start` | `/api/trips/{tripId}/start` | app del **conductor** — "Iniciar recorrido" (solo el conductor asignado) |
+| `POST` | `/api/gps/locations` | `/api/locations` | app del **conductor** — envía coordenadas (solo el conductor asignado, viaje en curso) |
+| `POST` | `/api/gps/trips/{tripId}/finish` | `/api/trips/{tripId}/finish` | app del **conductor** — "Terminar recorrido" |
+| `GET`  | `/api/gps/trips/{tripId}/location` | `/api/trips/{tripId}/location` | app del **pasajero** — estado y posición actual al abrir el mapa / reconectar |
 | `POST` | `/api/gps/broadcasting/auth` | `/api/broadcasting/auth` | app del **pasajero** (Laravel Echo) — autoriza el canal privado |
 | `GET`  | `/api/gps/ping` | `/api/ping` | healthcheck |
 | `GET`  | *(no exponer)* | `/up` | healthcheck interno de Laravel (Render/orquestador, acceso directo) |
@@ -147,7 +149,7 @@ Del lado del microservicio ya está: `apiPrefix = 'api'` en
 | | |
 |---|---|
 | Servicio | **`gps`** → URL del GPS microservice en Render |
-| Rutas | `POST /api/gps/locations`, `GET /api/gps/trips/{tripId}/location`, `GET\|POST /api/gps/broadcasting/auth` |
+| Rutas | `POST /api/gps/trips/{tripId}/start`, `POST /api/gps/trips/{tripId}/finish`, `POST /api/gps/locations`, `GET /api/gps/trips/{tripId}/location`, `GET\|POST /api/gps/broadcasting/auth` |
 | El microservicio recibe | `/api/{path}` (el Gateway quita `gps`) |
 | Auth | `validate.token` en el Gateway + reenviar `Authorization: Bearer` tal cual |
 | IDs | UUID |
