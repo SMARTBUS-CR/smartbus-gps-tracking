@@ -56,4 +56,15 @@ return [
      */
     'locations_prune_chunk' => (int) env('GPS_LOCATIONS_PRUNE_CHUNK', 5000),
 
+    /**
+     * Freshness of the current position shown to passengers
+     * (GET /api/trips/{tripId}/location, attribute `freshness`):
+     *   live      -> taken at most `position_live_seconds` ago
+     *   stale     -> taken at most `position_stale_seconds` ago
+     *   no_signal -> older than that, or no position yet
+     * The driver's app sends a reading every ~5 s.
+     */
+    'position_live_seconds' => (int) env('GPS_POSITION_LIVE_SECONDS', 30),
+    'position_stale_seconds' => (int) env('GPS_POSITION_STALE_SECONDS', 300),
+
 ];
