@@ -11,17 +11,20 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 
 /**
- * Existing `gps_locations` table (NOT managed by this service).
+ * `gps_locations` table: defined by the Dashboard migrations, written by GPS
+ * (the historical samples of each trip).
  *
- * Columns (see docs/DATABASE.md):
- *   id           uuid    (PK, no DB default: generated here by HasUuids, UUIDv7)
- *   trip_id      uuid    -> FK trips.id
- *   latitude     numeric(10,7)
- *   longitude    numeric(10,7)
- *   speed_kmh    numeric(8,2) nullable
- *   recorded_at  timestamp(0)  (stored in UTC)
- *   location     geography(Point,4326) nullable
- *   created_at / updated_at
+ * Columns:
+ *   id               uuid    (PK, no DB default: generated here by HasUuids, UUIDv7)
+ *   trip_id          uuid    -> FK trips.id
+ *   latitude         numeric(10,7)
+ *   longitude        numeric(10,7)
+ *   speed_kmh        numeric(8,2) nullable
+ *   accuracy_meters  numeric(10,2) nullable  (device accuracy radius)
+ *   recorded_at      timestamptz(6)  (when the device took the reading)
+ *   received_at      timestamptz(6)  (when GPS received it, DB default now())
+ *   location         geography(Point,4326) nullable
+ *   UNIQUE (trip_id, recorded_at)    -> a duplicate reading cannot be stored twice
  *
  * `latitude`/`longitude` are the source of truth for displaying the position.
  * `location` is the derived PostGIS point, used for spatial queries (distance,
@@ -33,7 +36,9 @@ use Illuminate\Support\Carbon;
  * @property float $latitude
  * @property float $longitude
  * @property float|null $speed_kmh
+ * @property float|null $accuracy_meters
  * @property Carbon $recorded_at
+ * @property Carbon|null $received_at
  */
 class GpsLocation extends Model
 {
@@ -52,7 +57,9 @@ class GpsLocation extends Model
         'latitude',
         'longitude',
         'speed_kmh',
+        'accuracy_meters',
         'recorded_at',
+        'received_at',
     ];
 
     /**
@@ -69,7 +76,9 @@ class GpsLocation extends Model
             'latitude' => 'float',
             'longitude' => 'float',
             'speed_kmh' => 'float',
+            'accuracy_meters' => 'float',
             'recorded_at' => 'datetime',
+            'received_at' => 'datetime',
         ];
     }
 
