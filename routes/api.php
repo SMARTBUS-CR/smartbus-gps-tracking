@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\GpsLocationController;
+use App\Http\Controllers\Api\TripController;
 use App\Http\Middleware\RequireGatewayUser;
 use Illuminate\Support\Facades\Route;
 
@@ -39,9 +40,17 @@ Route::middleware(RequireGatewayUser::class)->group(function () {
         ->name('gps.locations.store');
 
     /*
-    | HU3 - Latest known position of a trip (initial state of the passenger map,
-    | before the next BusLocationUpdated event arrives).
+    | Current position of a trip: initial state of the passenger map (and on
+    | reconnection), before the next BusLocationUpdated event arrives.
     */
     Route::get('/trips/{tripId}/location', [GpsLocationController::class, 'latestForTrip'])
         ->name('gps.trips.location');
+
+    /*
+    | The assigned driver starts / finishes the trip ("Iniciar / Terminar recorrido").
+    */
+    Route::post('/trips/{tripId}/start', [TripController::class, 'start'])
+        ->name('gps.trips.start');
+    Route::post('/trips/{tripId}/finish', [TripController::class, 'finish'])
+        ->name('gps.trips.finish');
 });
