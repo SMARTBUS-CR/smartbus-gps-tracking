@@ -66,6 +66,17 @@ describe('authorization (only the assigned driver, only while in progress)', fun
     })->with(['scheduled', 'completed', 'cancelled']);
 });
 
+it('rejects readings of a trip deleted by the Dashboard with a JSON:API 404', function () {
+    $this->trip->delete(); // soft delete (trips.deleted_at)
+
+    postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+        ->assertNotFound()
+        ->assertJsonPath('errors.0.status', '404');
+
+    expect(GpsLocation::query()->count())->toBe(0);
+    Event::assertNotDispatched(BusLocationUpdated::class);
+});
+
 it('follows the trip state set by the Dashboard: only in progress accepts readings', function () {
     $trip = Trip::factory()->drivenBy(TEST_USER_ID)->scheduled()->create();
 

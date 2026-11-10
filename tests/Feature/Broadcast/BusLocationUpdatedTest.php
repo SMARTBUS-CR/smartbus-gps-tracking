@@ -130,6 +130,15 @@ describe('channel authorization (private-trip.{id})', function () {
             ->assertForbidden();
     })->with([Trip::STATUS_COMPLETED, Trip::STATUS_CANCELLED]);
 
+    it('rejects a trip deleted by the Dashboard', function () {
+        $trip = Trip::factory()->create();
+        $trip->delete(); // soft delete (trips.deleted_at)
+
+        withToken('other-passenger-token')
+            ->post(BROADCAST_AUTH_URL, channelSubscription($trip->id), ['Accept' => 'application/json'])
+            ->assertForbidden();
+    });
+
     it('rejects a trip that does not exist or whose id is not a UUID', function (string $tripId) {
         withToken('other-passenger-token')
             ->post(BROADCAST_AUTH_URL, channelSubscription($tripId), ['Accept' => 'application/json'])

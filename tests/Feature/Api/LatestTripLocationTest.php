@@ -120,6 +120,15 @@ it('returns 404 for a trip that does not exist', function () {
         ->assertJsonPath('errors.0.status', '404');
 });
 
+it('returns 404 for a trip deleted by the Dashboard', function () {
+    $trip = Trip::factory()->create();
+    $trip->delete(); // soft delete (trips.deleted_at)
+
+    getJson("/api/trips/{$trip->id}/location")
+        ->assertNotFound()
+        ->assertJsonPath('errors.0.status', '404');
+});
+
 it('returns 404 (not a 500) for a trip id that is not a UUID', function () {
     getJson('/api/trips/not-a-uuid/location')->assertNotFound();
 });

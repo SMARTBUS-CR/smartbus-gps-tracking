@@ -34,6 +34,16 @@ it('never prunes readings of a trip still in progress', function () {
     assertModelExists($veryOld);
 });
 
+it('also prunes old readings of a finished trip deleted by the Dashboard', function () {
+    $trip = Trip::factory()->completed(now()->subDays(200))->create();
+    $old = GpsLocation::factory()->for($trip)->create(['recorded_at' => now()->subDays(90)]);
+    $trip->delete(); // soft delete, as the Dashboard does
+
+    artisan('gps:prune-locations', ['--days' => 60])->assertExitCode(0);
+
+    assertModelMissing($old);
+});
+
 it('only reports on a dry run, without deleting', function () {
     $trip = Trip::factory()->completed(now()->subDays(200))->create();
     $old = GpsLocation::factory()->for($trip)->create(['recorded_at' => now()->subDays(90)]);
