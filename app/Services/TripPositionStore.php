@@ -39,11 +39,6 @@ class TripPositionStore
         Cache::put($this->key($tripId), $position->toArray(), self::TTL_SECONDS);
     }
 
-    public function forget(string $tripId): void
-    {
-        Cache::forget($this->key($tripId));
-    }
-
     private function key(string $tripId): string
     {
         return "gps:trip:{$tripId}:position";

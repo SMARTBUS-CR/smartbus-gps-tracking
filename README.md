@@ -135,9 +135,7 @@ Contrato completo: [docs/openapi.yaml](docs/openapi.yaml) · [docs/GATEWAY.md](d
 | Método | Vía Gateway | Interna | Descripción |
 |---|---|---|---|
 | `GET`  | `/api/gps/ping` | `/api/ping` | Healthcheck |
-| `POST` | `/api/gps/trips/{tripId}/start` | `/api/trips/{tripId}/start` | El conductor asignado inicia el viaje (`scheduled → in_progress`) |
 | `POST` | `/api/gps/locations` | `/api/locations` | El conductor asignado envía una coordenada (solo con el viaje `in_progress`) |
-| `POST` | `/api/gps/trips/{tripId}/finish` | `/api/trips/{tripId}/finish` | El conductor asignado termina el viaje (`in_progress → completed`) |
 | `GET`  | `/api/gps/trips/{tripId}/location` | `/api/trips/{tripId}/location` | Estado del viaje + posición actual + antigüedad (`freshness`) para el mapa del pasajero |
 | `POST` | `/api/gps/broadcasting/auth` | `/api/broadcasting/auth` | Autorización del canal privado de Reverb |
 | `GET`  | — | `/up` | Healthcheck interno de Laravel (no vía Gateway) |
@@ -165,7 +163,8 @@ Todas las respuestas y errores siguen **JSON:API** (`application/vnd.api+json`).
 
 ## Tiempo real
 
-- **Eventos:** `BusLocationUpdated` (cada coordenada aceptada, guardada o no) y `TripTrackingEnded` (el conductor terminó el viaje) — [docs/EVENTS.md](docs/EVENTS.md).
+- **Evento:** `BusLocationUpdated` (cada coordenada aceptada, guardada o no) — [docs/EVENTS.md](docs/EVENTS.md).
+- **Iniciar / terminar el viaje lo hace el Dashboard** (`/api/v1/operations/trips/{id}/start | complete`); GPS solo acepta coordenadas mientras el viaje está `in_progress`.
 - Las coordenadas **duplicadas o atrasadas** se ignoran (`202`, `meta.outcome = duplicate | stale`): el bus nunca retrocede en el mapa.
 - **Canal:** `private-trip.{tripId}` — privado ([docs/CHANNELS.md](docs/CHANNELS.md)).
 - **Cliente Flutter:** `echo.private('trip.$id').listen('.BusLocationUpdated', ...)` ([docs/FLUTTER.md](docs/FLUTTER.md)).
@@ -208,9 +207,8 @@ app/
     RecordResult.php                    resultado de registrar una lectura
   Events/
     BusLocationUpdated.php              nueva posición en vivo
-    TripTrackingEnded.php               el conductor terminó el viaje
   Http/
-    Controllers/Api/GpsLocationController.php · TripController.php
+    Controllers/Api/GpsLocationController.php
     Middleware/
       IdentifyFromGateway.php           resuelve el usuario del token preguntando al Gateway
       RequireGatewayUser.php            401 sin un token válido
@@ -224,7 +222,6 @@ app/
     Concerns/HasLocationPoint.php        deriva la columna PostGIS `location` (lng, lat)
   Services/
     GpsLocationService.php              recibe lecturas: autoriza, ordena, guarda y emite
-    TripTrackingService.php             iniciar / terminar el viaje
     TripDriverGuard.php                 ¿es el conductor asignado?
     TripPositionStore.php               posición actual (caché + respaldo en BD)
   Support/
@@ -259,13 +256,13 @@ docs/                                    ← documentación de arquitectura
 
 Implementado y con tests (Pest):
 - Esquema operativo actual del Dashboard (`trips`, `drivers`, `gps_locations`) — ver [docs/DATABASE.md](docs/DATABASE.md).
-- Inicio / fin del viaje por el conductor asignado.
 - Solo el conductor asignado envía coordenadas, y solo con el viaje en curso (`403` / `409`).
 - Lecturas duplicadas o atrasadas ignoradas; posición actual + antigüedad para el pasajero.
 - Eventos en vivo por el canal privado del viaje.
 
 Fuera de alcance por ahora: avance por paradas / distancia sobre el recorrido, ETA,
-revocar suscripciones WebSocket abiertas, worker de colas.
+revocar suscripciones WebSocket abiertas, worker de colas. Iniciar / terminar el viaje
+y el evento "viaje terminado" son del Dashboard.
 
 ---
 

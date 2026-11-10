@@ -10,7 +10,7 @@
 
 | Tabla | GPS | Para qué |
 |---|---|---|
-| `trips` | **lee** y cambia **solo** el estado de ejecución | Iniciar / terminar el viaje (conductor asignado) |
+| `trips` | lee | Saber si el viaje está en curso y quién es su conductor (lo inicia / termina el Dashboard) |
 | `drivers` | lee | Saber si el usuario del token es el conductor asignado |
 | `gps_locations` | **escribe** | Muestras históricas de posición |
 | `companies`, `routes`, `route_patterns`, `route_schedules`, `buses` | no (solo claves foráneas de `trips`) | — |
@@ -34,7 +34,7 @@ como UUID **antes** de consultar (Postgres lanza `invalid input syntax for type 
 | service_date | date | |
 | status | varchar(20) | `scheduled` · `in_progress` · `completed` · `cancelled` |
 | scheduled_departure_at / scheduled_arrival_at | timestamptz(6) | Planificado por el Dashboard |
-| actual_departure_at / actual_arrival_at | timestamptz(6) null | **Los escribe GPS** al iniciar / terminar |
+| actual_departure_at / actual_arrival_at | timestamptz(6) null | Los escribe el Dashboard al iniciar / terminar |
 | planned_route_snapshot | jsonb | Copia del recorrido (no se usa todavía) |
 | cancellation_reason, cancelled_at | | Los escribe el Dashboard |
 
@@ -47,8 +47,8 @@ como UUID **antes** de consultar (Postgres lanza `invalid input syntax for type 
 | `completed` | `actual_departure_at` + `actual_arrival_at` (llegada ≥ salida) |
 | `cancelled` | `cancelled_at` + `cancellation_reason` |
 
-Transiciones que hace GPS (solo el conductor asignado):
-`scheduled → in_progress` (`POST /trips/{id}/start`) y `in_progress → completed` (`POST /trips/{id}/finish`).
+Las transiciones las hace el Dashboard (`POST /api/v1/operations/trips/{id}/start | complete`).
+GPS solo acepta coordenadas del conductor asignado mientras el viaje está `in_progress`.
 
 ## drivers
 | Columna | Tipo | Notas |

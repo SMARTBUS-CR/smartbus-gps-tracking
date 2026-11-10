@@ -163,7 +163,8 @@ abrir mapa del viaje 25
   → GET  /api/gps/trips/25/location                        (posición actual)
   → echo.private('trip.25').listen('.BusLocationUpdated')  (updates)
   → cada evento: si recorded_at > actual, mover marcador (sin recargar)
-  → echo.private('trip.25').listen('.TripTrackingEnded')   (viaje terminado: dejar de esperar)
+  → si dejan de llegar posiciones (freshness = no_signal): repetir el GET;
+    status = completed → mostrar "viaje terminado" y salir del canal
   → al reconectar: repetir el GET
   → salir de la pantalla: echo.leave('trip.25')
 ```

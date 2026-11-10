@@ -66,6 +66,26 @@ describe('authorization (only the assigned driver, only while in progress)', fun
     })->with(['scheduled', 'completed', 'cancelled']);
 });
 
+it('follows the trip state set by the Dashboard: only in progress accepts readings', function () {
+    $trip = Trip::factory()->drivenBy(TEST_USER_ID)->scheduled()->create();
+
+    // Not started yet.
+    postJson(STORE_URL, gpsLocationPayload($trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
+        ->assertConflict();
+
+    // The Dashboard starts the trip (POST /api/v1/operations/trips/{id}/start).
+    $trip->forceFill(['status' => Trip::STATUS_IN_PROGRESS, 'actual_departure_at' => now()])->save();
+    postJson(STORE_URL, gpsLocationPayload($trip->id, ['recorded_at' => '2026-09-07T12:01:00Z']))
+        ->assertCreated();
+
+    // The Dashboard completes it (POST /api/v1/operations/trips/{id}/complete).
+    $trip->forceFill(['status' => Trip::STATUS_COMPLETED, 'actual_arrival_at' => now()])->save();
+    postJson(STORE_URL, gpsLocationPayload($trip->id, ['recorded_at' => '2026-09-07T12:02:00Z']))
+        ->assertConflict();
+
+    expect(GpsLocation::query()->where('trip_id', $trip->id)->count())->toBe(1);
+});
+
 describe('order (a late reading never moves the bus back)', function () {
     it('ignores a reading taken before the current position', function () {
         postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:05:00Z']))

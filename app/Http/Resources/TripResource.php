@@ -9,8 +9,7 @@ use Illuminate\Http\Request;
 /**
  * JSON:API resource for `trips`.
  *
- * type -> "trips". Returned by start / finish (driver) and as an included
- * resource of a GPS reading (`?include=trip`). Only exposes what the clients
+ * type -> "trips". Included in a GPS reading with `?include=trip`. Only exposes what the clients
  * need, not the whole row (no planned route snapshot, no cancellation data).
  *
  * @mixin Trip

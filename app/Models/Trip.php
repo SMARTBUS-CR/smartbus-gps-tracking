@@ -12,14 +12,15 @@ use Illuminate\Support\Carbon;
 /**
  * `trips` table, owned by the Dashboard (smartbus-dashboard-admin migrations).
  *
- * GPS reads trips and only changes their execution state (start / finish by the
- * assigned driver, see App\Services\TripTrackingService). The database enforces
- * that each status carries its timestamps (trips_execution_check):
+ * GPS only READS trips. Starting and finishing a trip is done by the Dashboard
+ * (POST /api/v1/operations/trips/{id}/start | complete); GPS accepts readings
+ * only while the trip is in progress. The database enforces that each status
+ * carries its timestamps (trips_execution_check):
  *
  *   scheduled   -> no actual_* timestamps
  *   in_progress -> actual_departure_at
  *   completed   -> actual_departure_at + actual_arrival_at
- *   cancelled   -> cancelled_at + cancellation_reason (set by the Dashboard)
+ *   cancelled   -> cancelled_at + cancellation_reason
  *
  * @property string $id
  * @property string $company_id
@@ -58,15 +59,8 @@ class Trip extends Model
 
     protected $keyType = 'string';
 
-    /**
-     * Only the execution fields: everything else is planned by the Dashboard.
-     * (Factories bypass this to build complete test rows.)
-     */
-    protected $fillable = [
-        'status',
-        'actual_departure_at',
-        'actual_arrival_at',
-    ];
+    /** GPS never writes trips (factories bypass this to build test rows). */
+    protected $guarded = ['*'];
 
     protected function casts(): array
     {

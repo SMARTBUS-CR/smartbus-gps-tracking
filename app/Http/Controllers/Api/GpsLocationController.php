@@ -79,7 +79,8 @@ class GpsLocationController extends Controller
      *
      * What the passenger's map needs when it opens (or reconnects): the trip
      * status, the bus's current position and how fresh it is. Then the map keeps
-     * it updated with the `BusLocationUpdated` / `TripTrackingEnded` events.
+     * it updated with the `BusLocationUpdated` events. When updates stop
+     * (`no_signal`), call it again: `status = completed` means the trip ended.
      *
      * `freshness`:
      * - `live`: position taken in the last 30 s.

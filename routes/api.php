@@ -1,7 +1,6 @@
 <?php
 
 use App\Http\Controllers\Api\GpsLocationController;
-use App\Http\Controllers\Api\TripController;
 use App\Http\Middleware\RequireGatewayUser;
 use Illuminate\Support\Facades\Route;
 
@@ -46,11 +45,6 @@ Route::middleware(RequireGatewayUser::class)->group(function () {
     Route::get('/trips/{tripId}/location', [GpsLocationController::class, 'latestForTrip'])
         ->name('gps.trips.location');
 
-    /*
-    | The assigned driver starts / finishes the trip ("Iniciar / Terminar recorrido").
-    */
-    Route::post('/trips/{tripId}/start', [TripController::class, 'start'])
-        ->name('gps.trips.start');
-    Route::post('/trips/{tripId}/finish', [TripController::class, 'finish'])
-        ->name('gps.trips.finish');
+    // Starting / finishing a trip is done by the Dashboard (owner of `trips`),
+    // not by this service: GPS only accepts readings while the trip is in progress.
 });
