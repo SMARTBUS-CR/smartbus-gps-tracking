@@ -117,6 +117,8 @@ return new class extends Migration
             $table->string('cancellation_reason', 500)->nullable();
             $table->timestampTz('cancelled_at', 6)->nullable();
             $table->timestamps();
+            // Dashboard 2026_11_04_164520_add_deleted_at_to_trips_table.
+            $table->softDeletesTz();
 
             // The bus and the driver must belong to the trip's company.
             $table->foreign(['bus_id', 'company_id'])->references(['id', 'company_id'])->on('buses')->restrictOnDelete();

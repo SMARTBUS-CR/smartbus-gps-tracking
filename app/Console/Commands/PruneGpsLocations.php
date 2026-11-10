@@ -36,7 +36,9 @@ class PruneGpsLocations extends Command
         $cutoff = Carbon::now()->subDays($days);
 
         $eligible = GpsLocation::query()
-            ->whereHas('trip', fn ($q) => $q->whereNotNull('actual_arrival_at'))
+            // withTrashed: a finished trip later deleted by the Dashboard still
+            // has readings to clean up.
+            ->whereHas('trip', fn ($q) => $q->withTrashed()->whereNotNull('actual_arrival_at'))
             ->where('recorded_at', '<', $cutoff);
 
         $total = (clone $eligible)->count();

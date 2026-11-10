@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 
 /**
@@ -22,6 +23,9 @@ use Illuminate\Support\Carbon;
  *   completed   -> actual_departure_at + actual_arrival_at
  *   cancelled   -> cancelled_at + cancellation_reason
  *
+ * Soft deletes: a trip deleted by the Dashboard (`deleted_at`) does not exist for
+ * GPS: no readings (404), no current location (404), no channel subscription.
+ *
  * @property string $id
  * @property string $company_id
  * @property string $route_pattern_id
@@ -36,11 +40,14 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $actual_arrival_at
  * @property array<string, mixed> $planned_route_snapshot
  * @property Carbon|null $cancelled_at
+ * @property Carbon|null $deleted_at
  */
 class Trip extends Model
 {
     /** @use HasFactory<TripFactory> */
     use HasFactory;
+
+    use SoftDeletes;
 
     public const STATUS_SCHEDULED = 'scheduled';
 

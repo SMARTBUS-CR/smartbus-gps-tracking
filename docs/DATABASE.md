@@ -37,6 +37,7 @@ como UUID **antes** de consultar (Postgres lanza `invalid input syntax for type 
 | actual_departure_at / actual_arrival_at | timestamptz(6) null | Los escribe el Dashboard al iniciar / terminar |
 | planned_route_snapshot | jsonb | Copia del recorrido (no se usa todavía) |
 | cancellation_reason, cancelled_at | | Los escribe el Dashboard |
+| deleted_at | timestamptz null | Borrado lógico del Dashboard. Para GPS un viaje borrado **no existe**: 404 al enviar o consultar la posición, canal rechazado |
 
 **`trips_execution_check`** (la BD lo exige):
 
