@@ -9,9 +9,8 @@ use Illuminate\Http\Request;
 /**
  * JSON:API resource for `trips`.
  *
- * type -> "trips". Used mostly as an included resource
- * (GET /api/gps/locations?include=trip) for the passenger map. Only exposes
- * what the client needs, not the whole row.
+ * type -> "trips". Included in a GPS reading with `?include=trip`. Only exposes what the clients
+ * need, not the whole row (no planned route snapshot, no cancellation data).
  *
  * @mixin Trip
  */
@@ -26,14 +25,18 @@ class TripResource extends JsonApiResource
     }
 
     public $attributes = [
-        'route_id',
+        'status',
+        'route_pattern_id',
         'bus_id',
         'driver_id',
-        'status',
-        'started_at',
+        'service_date',
+        'scheduled_departure_at',
+        'scheduled_arrival_at',
+        'actual_departure_at',
+        'actual_arrival_at',
     ];
 
     public $relationships = [
-        // 'route', 'bus', 'driver' -> add these when a user story needs them.
+        // 'route_pattern', 'bus', 'driver' -> add these when a user story needs them.
     ];
 }

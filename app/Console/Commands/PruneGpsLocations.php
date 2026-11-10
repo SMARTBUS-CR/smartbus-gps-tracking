@@ -9,7 +9,7 @@ use Illuminate\Support\Carbon;
 /**
  * Housekeeping for the GPS volume problem (see config/gps.php): deletes
  * `gps_locations` rows older than the configured retention window, but ONLY
- * for trips that are already finished (`completed_at` set).
+ * for trips that are already finished (`actual_arrival_at` set).
  *
  * Deliberately does NOT touch ingestion (App\Services\GpsLocationService):
  * HU1's contract is that every valid coordinate received is stored — see
@@ -18,7 +18,7 @@ use Illuminate\Support\Carbon;
  * off) without changing that contract.
  *
  * A trip in progress is never pruned, no matter how old its first readings
- * are — only `completed_at IS NOT NULL` rows are eligible.
+ * are — only trips with `actual_arrival_at` set are eligible.
  */
 class PruneGpsLocations extends Command
 {
@@ -36,7 +36,9 @@ class PruneGpsLocations extends Command
         $cutoff = Carbon::now()->subDays($days);
 
         $eligible = GpsLocation::query()
-            ->whereHas('trip', fn ($q) => $q->whereNotNull('completed_at'))
+            // withTrashed: a finished trip later deleted by the Dashboard still
+            // has readings to clean up.
+            ->whereHas('trip', fn ($q) => $q->withTrashed()->whereNotNull('actual_arrival_at'))
             ->where('recorded_at', '<', $cutoff);
 
         $total = (clone $eligible)->count();

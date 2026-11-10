@@ -52,6 +52,7 @@ class GpsLocationResource extends JsonApiResource
         'latitude',
         'longitude',
         'speed_kmh',
+        'accuracy_meters',
         'recorded_at',
     ];
 

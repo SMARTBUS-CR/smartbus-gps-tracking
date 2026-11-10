@@ -20,9 +20,10 @@ class CompanyFactory extends Factory
 
         return [
             'id' => (string) Str::uuid7(),
-            'name' => $name,
+            'legal_name' => $name,
             'slug' => Str::slug($name).'-'.Str::lower(Str::random(6)),
-            'email' => fake()->companyEmail(),
+            'country_code' => 'CR',
+            'timezone' => 'America/Costa_Rica',
         ];
     }
 }

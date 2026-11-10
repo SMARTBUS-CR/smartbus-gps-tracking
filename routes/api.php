@@ -39,9 +39,12 @@ Route::middleware(RequireGatewayUser::class)->group(function () {
         ->name('gps.locations.store');
 
     /*
-    | HU3 - Latest known position of a trip (initial state of the passenger map,
-    | before the next BusLocationUpdated event arrives).
+    | Current position of a trip: initial state of the passenger map (and on
+    | reconnection), before the next BusLocationUpdated event arrives.
     */
     Route::get('/trips/{tripId}/location', [GpsLocationController::class, 'latestForTrip'])
         ->name('gps.trips.location');
+
+    // Starting / finishing a trip is done by the Dashboard (owner of `trips`),
+    // not by this service: GPS only accepts readings while the trip is in progress.
 });

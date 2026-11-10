@@ -3,59 +3,93 @@
 namespace App\Services;
 
 use App\Data\GpsFix;
+use App\Data\RecordResult;
+use App\Data\TripPosition;
 use App\Events\BusLocationUpdated;
 use App\Models\GpsLocation;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
+use App\Models\Trip;
+use App\Support\Gateway\GatewayUser;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\Cache;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Throwable;
 
 /**
- * Application logic for GPS readings.
+ * Application logic for GPS readings: the single place where a reading is
+ * accepted, stored and broadcast. Controllers never touch the models directly.
  *
- * The single place where a `gps_locations` row is born. Future business rules
- * hook in here (trip must be active, discard stale / out-of-order readings, feed
- * the ETA microservice). Controllers never touch the model directly — they go
- * through this service.
+ * Every check happens BEFORE anything is stored or broadcast:
+ *   1. the sender is the driver assigned to the trip      (403 otherwise)
+ *   2. the trip is in progress                            (409 otherwise)
+ *   3. the reading is newer than the current position     (ignored otherwise)
  */
 class GpsLocationService
 {
+    public function __construct(
+        private readonly TripDriverGuard $guard,
+        private readonly TripPositionStore $positions,
+    ) {}
+
     /**
-     * Records a GPS reading (HU1) and returns the persisted model — or `null`
-     * when the reading was accepted and broadcast live but NOT written to
-     * `gps_locations` (below the distance/time threshold, see config/gps.php
-     * and shouldPersist()). The caller (GpsLocationController) maps `null` to
-     * a 202 with no `data`, still a success response.
+     * Records one reading of the driver's app.
      *
-     * The PostGIS `location` column is derived by the model itself
-     * (App\Models\Concerns\HasLocationPoint).
+     * Readings of the same trip are processed one at a time (cache lock), so
+     * two requests arriving together can never move the bus back.
      */
-    public function record(GpsFix $fix): ?GpsLocation
+    public function record(GpsFix $fix, GatewayUser $driver): RecordResult
     {
-        $last = $this->lastPersistedFor($fix->tripId);
+        $trip = Trip::query()->findOrFail($fix->tripId);
 
-        if ($this->shouldPersist($fix, $last)) {
-            $location = GpsLocation::create($fix->toDatabaseRow());
-            $this->broadcast($location);
+        $this->guard->authorize($trip, $driver);
 
-            return $location;
+        if (! $trip->isInProgress()) {
+            throw new ConflictHttpException("The trip is not in progress: it is {$trip->status}.");
         }
 
-        // Below the threshold: HU2 (the passenger's live map) must not stall
-        // just because this fix isn't worth a new row, so it's still
-        // broadcast — from a transient (unsaved) model built straight from
-        // the fix, reusing the trip already loaded on $last.
-        $last->loadMissing('trip');
-        $transient = (new GpsLocation($fix->toDatabaseRow()))->setRelation('trip', $last->trip);
-        $this->broadcast($transient);
+        return Cache::lock("gps:trip:{$trip->id}:record", 10)
+            ->block(5, fn () => $this->recordInOrder($fix, $trip));
+    }
 
-        return null;
+    private function recordInOrder(GpsFix $fix, Trip $trip): RecordResult
+    {
+        // A reading taken before the current position arrived late (e.g. after
+        // a disconnection): it must not replace a newer one.
+        $current = $this->positions->get($trip->id);
+        if ($current !== null) {
+            if ($fix->recordedAt->equalTo($current->recordedAt)) {
+                return RecordResult::duplicate();
+            }
+            if ($fix->recordedAt->lessThan($current->recordedAt)) {
+                return RecordResult::stale();
+            }
+        }
+
+        $location = null;
+        if ($this->shouldPersist($fix, $this->lastPersistedFor($trip->id))) {
+            try {
+                $location = GpsLocation::create($fix->toDatabaseRow());
+            } catch (UniqueConstraintViolationException) {
+                // Same (trip_id, recorded_at) already stored (e.g. the cache was lost).
+                return RecordResult::duplicate();
+            }
+        }
+
+        $this->positions->put($trip->id, TripPosition::fromFix($fix));
+
+        // The passenger's live map must not stall just because this reading
+        // isn't worth a new row: it is always broadcast.
+        $broadcastable = $location
+            ?? (new GpsLocation($fix->toDatabaseRow()))->setRelation('trip', $trip);
+        $this->broadcast($broadcastable);
+
+        return $location ? RecordResult::persisted($location) : RecordResult::broadcastOnly();
     }
 
     /**
      * Whether $fix is worth a new `gps_locations` row: it's the trip's first
-     * reading, or the bus moved at least `persist_min_distance_meters` since
-     * $last, or at least `persist_min_interval_seconds` elapsed since $last
-     * (whichever comes first) — so a stopped bus still leaves a periodic
-     * "still here" trail instead of going silent in the historical data.
+     * stored reading, or the bus moved at least `persist_min_distance_meters`
+     * since $last, or at least `persist_min_interval_seconds` elapsed since
+     * $last — so a stopped bus still leaves a periodic "still here" trail.
      */
     private function shouldPersist(GpsFix $fix, ?GpsLocation $last): bool
     {
@@ -83,12 +117,11 @@ class GpsLocationService
         return GpsLocation::query()
             ->where('trip_id', $tripId)
             ->orderByDesc('recorded_at')
-            ->orderByDesc('id')
             ->first();
     }
 
     /**
-     * Great-circle distance in meters between two coordinates (haversine).
+     * Great-circle distance in meters between two coordinates (haversine):
      * no need for a PostGIS round-trip on every ingested reading.
      */
     private function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): float
@@ -104,26 +137,10 @@ class GpsLocationService
     }
 
     /**
-     * Latest GPS reading of a trip (HU3 — initial state of the passenger map).
+     * Broadcasts the position over WebSockets (Reverb -> Echo).
      *
-     * @throws ModelNotFoundException when the trip
-     *                                does not exist or has no readings yet; the controller maps it to 404.
-     */
-    public function latestForTrip(string $tripId): GpsLocation
-    {
-        return GpsLocation::query()
-            ->where('trip_id', $tripId)
-            ->orderByDesc('recorded_at')
-            ->orderByDesc('id')
-            ->firstOrFail();
-    }
-
-    /**
-     * Broadcasts the new coordinate over WebSockets (Reverb -> Echo) for HU2.
-     *
-     * Best-effort: if Reverb is down or the broadcast fails, the reading is
-     * already stored and ingestion (HU1) must not break. In production, with
-     * QUEUE_CONNECTION=redis, the queued job also retries on its own.
+     * Best-effort: if Reverb is down, the reading is already accepted and
+     * ingestion must not break.
      */
     private function broadcast(GpsLocation $location): void
     {

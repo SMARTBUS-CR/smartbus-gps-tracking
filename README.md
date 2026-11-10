@@ -135,8 +135,8 @@ Contrato completo: [docs/openapi.yaml](docs/openapi.yaml) · [docs/GATEWAY.md](d
 | Método | Vía Gateway | Interna | Descripción |
 |---|---|---|---|
 | `GET`  | `/api/gps/ping` | `/api/ping` | Healthcheck |
-| `POST` | `/api/gps/locations` | `/api/locations` | Registrar una coordenada GPS (HU1) |
-| `GET`  | `/api/gps/trips/{tripId}/location` | `/api/trips/{tripId}/location` | Última posición conocida del viaje (HU3) |
+| `POST` | `/api/gps/locations` | `/api/locations` | El conductor asignado envía una coordenada (solo con el viaje `in_progress`) |
+| `GET`  | `/api/gps/trips/{tripId}/location` | `/api/trips/{tripId}/location` | Estado del viaje + posición actual + antigüedad (`freshness`) para el mapa del pasajero |
 | `POST` | `/api/gps/broadcasting/auth` | `/api/broadcasting/auth` | Autorización del canal privado de Reverb |
 | `GET`  | — | `/up` | Healthcheck interno de Laravel (no vía Gateway) |
 
@@ -148,10 +148,11 @@ Todas las respuestas y errores siguen **JSON:API** (`application/vnd.api+json`).
   "data": {
     "type": "gps-locations",
     "attributes": {
-      "trip_id": 25,
+      "trip_id": "01a09332-3457-7315-885e-4ebb218f7262",
       "latitude": 10.4631,
       "longitude": -83.9921,
       "speed_kmh": 38.5,
+      "accuracy_meters": 8.5,
       "recorded_at": "2026-09-03T15:00:00Z"
     }
   }
@@ -162,10 +163,36 @@ Todas las respuestas y errores siguen **JSON:API** (`application/vnd.api+json`).
 
 ## Tiempo real
 
-- **Evento:** `BusLocationUpdated` — se dispara al guardar cada coordenada ([docs/EVENTS.md](docs/EVENTS.md)).
+- **Evento:** `BusLocationUpdated` (cada coordenada aceptada, guardada o no) — [docs/EVENTS.md](docs/EVENTS.md).
+- **Iniciar / terminar el viaje lo hace el Dashboard** (`/api/v1/operations/trips/{id}/start | complete`); GPS solo acepta coordenadas mientras el viaje está `in_progress`.
+- Las coordenadas **duplicadas o atrasadas** se ignoran (`202`, `meta.outcome = duplicate | stale`): el bus nunca retrocede en el mapa.
 - **Canal:** `private-trip.{tripId}` — privado ([docs/CHANNELS.md](docs/CHANNELS.md)).
 - **Cliente Flutter:** `echo.private('trip.$id').listen('.BusLocationUpdated', ...)` ([docs/FLUTTER.md](docs/FLUTTER.md)).
 - El broadcast es **best-effort**: si Reverb está caído, la coordenada se guarda igual y `POST /api/gps/locations` devuelve `201`.
+
+---
+
+## Despliegue en Render (plan gratuito)
+
+Un solo servicio web (Docker): nginx + Laravel + Reverb dentro del mismo contenedor
+(`Dockerfile`, `docker/`). **No hay worker**: el broadcast es síncrono y no hay cálculos de ETA.
+
+Variables de entorno mínimas:
+
+| Variable | Valor |
+|---|---|
+| `APP_KEY`, `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL` | las de Laravel |
+| `DB_*` | BD de operaciones (Aiven), `DB_SSLMODE=require` |
+| `GATEWAY_URL` | URL del API Gateway (resuelve el usuario del token) |
+| `BROADCAST_CONNECTION=reverb`, `REVERB_*` | credenciales de Reverb |
+| `CACHE_STORE=database` o `file` | posición actual de cada viaje (si se pierde, se usa la última fila de `gps_locations`) |
+
+Límites del plan gratuito de Render (aceptados para esta etapa):
+- El servicio **se duerme a los 15 min sin tráfico** y tarda **~1 min** en despertar. Con un viaje en
+  curso el conductor envía cada ~5 s, así que se mantiene despierto mientras haya recorridos.
+- **750 horas al mes por workspace** (compartidas con Gateway, Auth y Dashboard si están en el mismo).
+- **Sin disco persistente**: todo lo que debe sobrevivir un reinicio está en la BD.
+- Al reconectar el WebSocket, Flutter vuelve a pedir `GET /trips/{id}/location` (no se pierde el estado).
 
 ---
 
@@ -173,21 +200,30 @@ Todas las respuestas y errores siguen **JSON:API** (`application/vnd.api+json`).
 
 ```
 app/
-  Data/GpsFix.php                       DTO inmutable de una lectura validada
-  Events/BusLocationUpdated.php         evento de broadcasting (HU2)
+  Data/
+    GpsFix.php                          DTO inmutable de una lectura validada
+    TripPosition.php                    posición actual de un viaje
+    TripTrackingState.php               estado + posición + antigüedad para el pasajero
+    RecordResult.php                    resultado de registrar una lectura
+  Events/
+    BusLocationUpdated.php              nueva posición en vivo
   Http/
     Controllers/Api/GpsLocationController.php
     Middleware/
-      IdentifyFromGateway.php           reconstruye el usuario desde cabeceras del Gateway
+      IdentifyFromGateway.php           resuelve el usuario del token preguntando al Gateway
+      RequireGatewayUser.php            401 sin un token válido
       NegotiatesJsonApi.php             content negotiation JSON:API (415/406)
     Requests/StoreGpsLocationRequest.php
     Resources/
       JsonApi/JsonApiResource.php       base: type en kebab-case plural
       GpsLocationResource.php · TripResource.php
   Models/
-    GpsLocation.php · Trip.php · Driver.php (uuid) · Company.php · Route.php · Bus.php
+    GpsLocation.php · Trip.php · Driver.php · Company.php · Route.php · RoutePattern.php · RouteSchedule.php · Bus.php
     Concerns/HasLocationPoint.php        deriva la columna PostGIS `location` (lng, lat)
-  Services/GpsLocationService.php        punto único donde nace una gps_location
+  Services/
+    GpsLocationService.php              recibe lecturas: autoriza, ordena, guarda y emite
+    TripDriverGuard.php                 ¿es el conductor asignado?
+    TripPositionStore.php               posición actual (caché + respaldo en BD)
   Support/
     Gateway/GatewayUser.php
     JsonApi/JsonApiErrors.php            documentos de error JSON:API
@@ -216,14 +252,17 @@ docs/                                    ← documentación de arquitectura
 
 ---
 
-## User Stories (pendientes de implementar)
+## Alcance actual: seguimiento en tiempo real
 
-- **HU1** — Recibir coordenadas GPS · `POST /api/gps/locations` funcional; falta endurecer reglas de negocio
-- **HU2** — Transmitir por WebSocket · evento + canal + auth listos, flujo verificado end-to-end
-- **HU3** — Mapa del pasajero en tiempo real · `GET /api/gps/trips/{tripId}/location` implementado; el resto es cliente Flutter
+Implementado y con tests (Pest):
+- Esquema operativo actual del Dashboard (`trips`, `drivers`, `gps_locations`) — ver [docs/DATABASE.md](docs/DATABASE.md).
+- Solo el conductor asignado envía coordenadas, y solo con el viaje en curso (`403` / `409`).
+- Lecturas duplicadas o atrasadas ignoradas; posición actual + antigüedad para el pasajero.
+- Eventos en vivo por el canal privado del viaje.
 
-Todas las **rutas HTTP** que necesitan las 3 HU están implementadas. Falta la lógica
-de negocio de cada HU y sus tests.
+Fuera de alcance por ahora: avance por paradas / distancia sobre el recorrido, ETA,
+revocar suscripciones WebSocket abiertas, worker de colas. Iniciar / terminar el viaje
+y el evento "viaje terminado" son del Dashboard.
 
 ---
 

@@ -33,8 +33,8 @@ Este servicio **no** implementa otro gateway. Solo se configura para vivir detr�
 
 | Método | Vía Gateway (lo que llama Flutter) | Ruta interna | Quién lo usa |
 |---|---|---|---|
-| `POST` | `/api/gps/locations` | `/api/locations` | app del **conductor** — envía coordenadas (HU1) |
-| `GET`  | `/api/gps/trips/{tripId}/location` | `/api/trips/{tripId}/location` | app del **pasajero** — posición actual al abrir el mapa (HU3) |
+| `POST` | `/api/gps/locations` | `/api/locations` | app del **conductor** — envía coordenadas (solo el conductor asignado, viaje en curso) |
+| `GET`  | `/api/gps/trips/{tripId}/location` | `/api/trips/{tripId}/location` | app del **pasajero** — estado y posición actual al abrir el mapa / reconectar |
 | `POST` | `/api/gps/broadcasting/auth` | `/api/broadcasting/auth` | app del **pasajero** (Laravel Echo) — autoriza el canal privado |
 | `GET`  | `/api/gps/ping` | `/api/ping` | healthcheck |
 | `GET`  | *(no exponer)* | `/up` | healthcheck interno de Laravel (Render/orquestador, acceso directo) |

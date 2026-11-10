@@ -24,7 +24,9 @@ class GpsLocationFactory extends Factory
             'latitude' => fake()->latitude(9.8, 10.1),
             'longitude' => fake()->longitude(-84.2, -83.9),
             'speed_kmh' => fake()->randomFloat(2, 0, 80),
-            'recorded_at' => now(),
+            'accuracy_meters' => fake()->randomFloat(2, 3, 30),
+            // Unique per trip in the database: spread the fake readings in time.
+            'recorded_at' => now()->subSeconds(fake()->unique()->numberBetween(1, 1_000_000)),
         ];
     }
 }
