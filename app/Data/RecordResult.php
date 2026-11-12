@@ -12,7 +12,7 @@ final readonly class RecordResult
     /** Broadcast live and stored as a historical sample. */
     public const PERSISTED = 'persisted';
 
-    /** Broadcast live, not stored (below the distance/time sampling threshold). */
+    /** Broadcast live, not stored (neither the start nor the end of the trip). */
     public const BROADCAST_ONLY = 'broadcast_only';
 
     /** Same `recorded_at` as the current position: already processed. */

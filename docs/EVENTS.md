@@ -18,7 +18,7 @@ Ubicación: [`app/Events/BusLocationUpdated.php`](../app/Events/BusLocationUpdat
 
 ### Qué es
 Evento de dominio que representa "llegó una nueva coordenada de un viaje".
-Implementa `ShouldBroadcast` → Laravel lo publica en Reverb automáticamente.
+Implementa `ShouldBroadcastNow` → Laravel lo publica en Reverb al instante (sin cola).
 
 ### Dónde se dispara
 Único punto: [`GpsLocationService::record()`](../app/Services/GpsLocationService.php),
@@ -61,13 +61,20 @@ En Flutter: `.listen('.BusLocationUpdated', ...)` (el punto inicial ignora el na
 }
 ```
 `bus_id` no está en `gps_locations`: el evento carga `trip` para obtenerlo.
-El constructor extrae solo escalares (no guarda el modelo) → serialización trivial en cola.
+El constructor extrae solo escalares (no guarda el modelo) → payload simple. No se
+encola: se emite en el mismo POST (ver abajo).
 
 ### Queue / latencia
-Con `QUEUE_CONNECTION=sync` (dev) se emite inline durante el POST.
-En producción: worker sobre Redis (`QUEUE_CONNECTION=redis`) para no bloquear la
-respuesta del conductor y reintentar en fallos. Si se necesita latencia mínima
-garantizada sin depender de un worker, cambiar a `ShouldBroadcastNow`.
+Implementa **`ShouldBroadcastNow`**: se emite a Reverb dentro del POST, sin cola.
+Con la cola (`queue:work --sleep=3`, un job a la vez) el pasajero veía el bus
+segundos atrasado. Reverb corre al lado de la API (127.0.0.1), así que emitir en
+línea tarda milisegundos y no depende del worker.
+
+### Qué se guarda
+Se **transmite** cada lectura (~5 s), pero en `gps_locations` solo quedan el
+**inicio** (primera lectura del viaje) y el **fin** (la lectura con
+`final: true`, que la app envía justo antes de "Finalizar recorrido"). Las demás
+responden `202 broadcast_only`.
 
 ### Best-effort (no rompe HU1)
 `GpsLocationService::broadcast()` envuelve el `dispatch()` en `try/catch + report()`.

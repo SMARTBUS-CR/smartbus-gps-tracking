@@ -63,7 +63,7 @@ it('returns the freshest reading even when it was not stored as a sample', funct
 
     postJson('/api/locations', gpsLocationPayload($trip->id, ['recorded_at' => now()->subSeconds(20)->toISOString()]))
         ->assertCreated();
-    // 3 m away, 10 s later: broadcast but not stored (below the sampling threshold).
+    // A reading during the trip: broadcast but not stored (only start and end are).
     postJson('/api/locations', gpsLocationPayload($trip->id, [
         'latitude' => 9.93003,
         'recorded_at' => now()->subSeconds(10)->toISOString(),

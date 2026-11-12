@@ -20,6 +20,8 @@ final readonly class GpsFix
         public ?float $speedKmh,
         public CarbonImmutable $recordedAt,
         public ?float $accuracyMeters = null,
+        /** Last reading of the trip, sent right before "Finalizar recorrido". */
+        public bool $isFinal = false,
     ) {}
 
     /**
@@ -29,7 +31,8 @@ final readonly class GpsFix
      *     longitude: int|float|string,
      *     speed_kmh?: int|float|string|null,
      *     accuracy_meters?: int|float|string|null,
-     *     recorded_at: string
+     *     recorded_at: string,
+     *     final?: bool|int|string|null
      * } $attributes  JSON:API attributes already validated.
      */
     public static function fromAttributes(array $attributes): self
@@ -41,6 +44,7 @@ final readonly class GpsFix
             speedKmh: isset($attributes['speed_kmh']) ? (float) $attributes['speed_kmh'] : null,
             recordedAt: CarbonImmutable::parse($attributes['recorded_at'])->utc(),
             accuracyMeters: isset($attributes['accuracy_meters']) ? (float) $attributes['accuracy_meters'] : null,
+            isFinal: filter_var($attributes['final'] ?? false, FILTER_VALIDATE_BOOLEAN),
         );
     }
 
