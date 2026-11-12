@@ -16,9 +16,9 @@ use function Pest\Laravel\postJson;
 | app so that I can determine the bus's current location."
 |
 | Every valid reading is ACCEPTED and BROADCAST live (HU2), but it is only
-| PERSISTED to gps_locations when it is the trip's first reading, or it moved
-| far enough, or enough time passed since the last persisted one
-| (config/gps.php, App\Services\GpsLocationService).
+| PERSISTED to gps_locations when it is the trip's START (its first reading) or
+| its END (the reading sent with `final: true`) — see config/gps.php and
+| App\Services\GpsLocationService.
 */
 
 const STORE_URL = '/api/locations';
