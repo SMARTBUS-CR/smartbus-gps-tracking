@@ -12,9 +12,9 @@ use Illuminate\Foundation\Events\Dispatchable;
  * Fired every time a new GPS coordinate of a trip is received (HU1) and
  * broadcast live for HU2 — whether or not it was also persisted to
  * `gps_locations` (see App\Services\GpsLocationService::record() and
- * config/gps.php: readings below the distance/time threshold are still
- * broadcast from a transient, unsaved model so the passenger's live map
- * never stalls just because that particular fix wasn't worth a new row).
+ * config/gps.php: only the trip's start and end are stored; the readings in
+ * between are broadcast from a transient, unsaved model, so the passenger's
+ * live map gets every one of them).
  *
  * Origin      : App\Services\GpsLocationService::record()
  * Destination : private WebSocket channel of the trip -> Reverb -> Laravel Echo (Flutter)
