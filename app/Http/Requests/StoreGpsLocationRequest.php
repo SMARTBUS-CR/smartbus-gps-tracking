@@ -95,6 +95,15 @@ class StoreGpsLocationRequest extends FormRequest
              * @example 2026-09-03T15:00:00Z
              */
             'data.attributes.recorded_at' => ['required', 'date'],
+
+            /**
+             * `true` on the last reading of the trip (the app sends it right
+             * before "Finalizar recorrido"). It is stored as the trip's end
+             * position. Optional, `false` by default.
+             *
+             * @example false
+             */
+            'data.attributes.final' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -115,6 +124,7 @@ class StoreGpsLocationRequest extends FormRequest
             'data.attributes.speed_kmh' => 'speed_kmh',
             'data.attributes.accuracy_meters' => 'accuracy_meters',
             'data.attributes.recorded_at' => 'recorded_at',
+            'data.attributes.final' => 'final',
         ];
     }
 
