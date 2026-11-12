@@ -61,7 +61,8 @@ En Flutter: `.listen('.BusLocationUpdated', ...)` (el punto inicial ignora el na
 }
 ```
 `bus_id` no está en `gps_locations`: el evento carga `trip` para obtenerlo.
-El constructor extrae solo escalares (no guarda el modelo) → serialización trivial en cola.
+El constructor extrae solo escalares (no guarda el modelo) → payload simple. No se
+encola: se emite en el mismo POST (ver abajo).
 
 ### Queue / latencia
 Implementa **`ShouldBroadcastNow`**: se emite a Reverb dentro del POST, sin cola.
