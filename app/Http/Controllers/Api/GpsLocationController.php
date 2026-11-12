@@ -44,9 +44,13 @@ class GpsLocationController extends Controller
      * Accepted readings are broadcast live on the private channel `trip.{tripId}`
      * (`BusLocationUpdated` event).
      *
-     * - **201**: broadcast and stored as a historical sample (JSON:API resource).
-     * - **202** `meta.outcome = broadcast_only`: broadcast, not stored (too close in
-     *   distance and time to the last stored sample).
+     * Only the **start** and the **end** of each trip are stored: its first reading,
+     * and the reading sent with `final: true` (right before the driver finishes the
+     * trip). Every accepted reading is broadcast, stored or not.
+     *
+     * - **201**: broadcast and stored, the trip's start or end (JSON:API resource).
+     * - **202** `meta.outcome = broadcast_only`: broadcast, not stored (a reading
+     *   during the trip: neither the first one nor `final`).
      * - **202** `meta.outcome = duplicate | stale`: ignored. The reading was already
      *   processed, or it was taken before the current position (it arrived late) and
      *   must not move the bus back.
