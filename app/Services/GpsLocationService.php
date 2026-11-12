@@ -22,6 +22,10 @@ use Throwable;
  *   1. the sender is the driver assigned to the trip      (403 otherwise)
  *   2. the trip is in progress                            (409 otherwise)
  *   3. the reading is newer than the current position     (ignored otherwise)
+ *
+ * Transmit != persist: every accepted reading is broadcast at once (the
+ * passenger's map), but `gps_locations` only keeps the START (first reading
+ * of the trip) and the END (reading sent with `final: true`) of each trip.
  */
 class GpsLocationService
 {
@@ -64,8 +68,12 @@ class GpsLocationService
             }
         }
 
+        // Only the ends of the trip are stored: its first reading (the bus
+        // just started) and the one the app marks as final (right before
+        // "Finalizar recorrido"). $current === null means the trip has no
+        // position yet, neither cached nor stored.
         $location = null;
-        if ($this->shouldPersist($fix, $this->lastPersistedFor($trip->id))) {
+        if ($current === null || $fix->isFinal) {
             try {
                 $location = GpsLocation::create($fix->toDatabaseRow());
             } catch (UniqueConstraintViolationException) {
@@ -76,64 +84,13 @@ class GpsLocationService
 
         $this->positions->put($trip->id, TripPosition::fromFix($fix));
 
-        // The passenger's live map must not stall just because this reading
-        // isn't worth a new row: it is always broadcast.
+        // Every accepted reading reaches the passenger's live map right away,
+        // stored or not.
         $broadcastable = $location
             ?? (new GpsLocation($fix->toDatabaseRow()))->setRelation('trip', $trip);
         $this->broadcast($broadcastable);
 
         return $location ? RecordResult::persisted($location) : RecordResult::broadcastOnly();
-    }
-
-    /**
-     * Whether $fix is worth a new `gps_locations` row: it's the trip's first
-     * stored reading, or the bus moved at least `persist_min_distance_meters`
-     * since $last, or at least `persist_min_interval_seconds` elapsed since
-     * $last — so a stopped bus still leaves a periodic "still here" trail.
-     */
-    private function shouldPersist(GpsFix $fix, ?GpsLocation $last): bool
-    {
-        if ($last === null) {
-            return true;
-        }
-
-        $secondsSinceLast = abs($last->recorded_at->diffInSeconds($fix->recordedAt));
-        if ($secondsSinceLast >= (int) config('gps.persist_min_interval_seconds')) {
-            return true;
-        }
-
-        $distanceMeters = $this->haversineMeters(
-            $last->latitude,
-            $last->longitude,
-            $fix->latitude,
-            $fix->longitude,
-        );
-
-        return $distanceMeters >= (float) config('gps.persist_min_distance_meters');
-    }
-
-    private function lastPersistedFor(string $tripId): ?GpsLocation
-    {
-        return GpsLocation::query()
-            ->where('trip_id', $tripId)
-            ->orderByDesc('recorded_at')
-            ->first();
-    }
-
-    /**
-     * Great-circle distance in meters between two coordinates (haversine):
-     * no need for a PostGIS round-trip on every ingested reading.
-     */
-    private function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): float
-    {
-        $earthRadiusMeters = 6_371_000.0;
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLon = deg2rad($lon2 - $lon1);
-
-        $a = sin($dLat / 2) ** 2
-            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
-
-        return 2 * $earthRadiusMeters * asin(min(1.0, sqrt($a)));
     }
 
     /**
