@@ -3,6 +3,7 @@
 use App\Events\BusLocationUpdated;
 use App\Models\GpsLocation;
 use App\Models\Trip;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -259,16 +260,20 @@ describe('validation', function () {
     });
 });
 
-describe('persist filter (transmit != persist)', function () {
-    it('does not persist but still broadcasts when close in distance and time', function () {
+describe('only the start and the end of the trip are stored (transmit != persist)', function () {
+    it('stores the first reading of the trip: its start', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
+            ->assertCreated()
+            ->assertJsonPath('data.attributes.recorded_at', '2026-09-07T12:00:00.000000Z');
+
+        expect(GpsLocation::query()->where('trip_id', $this->trip->id)->count())->toBe(1);
+    });
+
+    it('does not store the readings during the trip, however far or late, but broadcasts every one', function (array $attributes) {
         postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
             ->assertCreated();
 
-        // ~3 m away, 10 s later: below the default 15 m / 60 s thresholds.
-        postJson(STORE_URL, gpsLocationPayload($this->trip->id, [
-            'latitude' => 9.93003,
-            'recorded_at' => '2026-09-07T12:00:10Z',
-        ]))
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, $attributes))
             ->assertAccepted()
             ->assertHeader('Content-Type', 'application/vnd.api+json')
             ->assertJsonMissingPath('data')
@@ -277,32 +282,62 @@ describe('persist filter (transmit != persist)', function () {
 
         expect(GpsLocation::query()->where('trip_id', $this->trip->id)->count())->toBe(1);
 
-        // HU2 still fires for it: the live map must not stall.
+        // The passenger's map gets it anyway.
         Event::assertDispatched(BusLocationUpdated::class, 2);
-        Event::assertDispatched(BusLocationUpdated::class, fn (BusLocationUpdated $event) => $event->locationId === null);
-    });
+        Event::assertDispatched(BusLocationUpdated::class, fn (BusLocationUpdated $event) => $event->locationId === null
+            && $event->latitude === (float) ($attributes['latitude'] ?? 9.93));
+    })->with([
+        '5 s later, a few meters away' => [['latitude' => 9.93003, 'recorded_at' => '2026-09-07T12:00:05Z']],
+        '10 s later, 3 km away' => [['latitude' => 9.957, 'recorded_at' => '2026-09-07T12:00:10Z']],
+        '10 min later, not moved' => [['recorded_at' => '2026-09-07T12:10:00Z']],
+        'explicitly not final' => [['final' => false, 'recorded_at' => '2026-09-07T12:00:15Z']],
+    ]);
 
-    it('persists when it moved far enough even if soon after', function () {
+    it('stores the reading marked final: the end of the trip', function () {
         postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
             ->assertCreated();
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['latitude' => 9.94, 'recorded_at' => '2026-09-07T12:20:00Z']))
+            ->assertAccepted();
 
-        // ~33 m away (> 15 m), only 10 s later (< 60 s): distance alone is enough.
         postJson(STORE_URL, gpsLocationPayload($this->trip->id, [
-            'latitude' => 9.9303,
-            'recorded_at' => '2026-09-07T12:00:10Z',
-        ]))->assertCreated();
+            'latitude' => 9.96,
+            'recorded_at' => '2026-09-07T12:40:00Z',
+            'final' => true,
+        ]))
+            ->assertCreated()
+            ->assertJsonPath('data.attributes.latitude', 9.96);
 
-        expect(GpsLocation::query()->where('trip_id', $this->trip->id)->count())->toBe(2);
+        $stored = GpsLocation::query()->where('trip_id', $this->trip->id)->orderBy('recorded_at')->pluck('latitude')->all();
+        expect($stored)->toBe([9.93, 9.96]); // start and end
+        Event::assertDispatched(BusLocationUpdated::class, 3);
     });
 
-    it('persists when enough time passed even without moving', function () {
+    it('a final reading that is the first one is stored once', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['final' => true]))->assertCreated();
+
+        expect(GpsLocation::query()->count())->toBe(1);
+    });
+
+    it('after the cache is lost, the stored start still counts: later readings are not stored', function () {
         postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
             ->assertCreated();
+        Cache::flush();
 
-        // Same coordinates, 90 s later (> 60 s): a stopped bus still leaves a periodic trail.
-        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:01:30Z']))
-            ->assertCreated();
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['latitude' => 9.95, 'recorded_at' => '2026-09-07T12:05:00Z']))
+            ->assertAccepted()
+            ->assertJsonPath('meta.outcome', 'broadcast_only');
 
-        expect(GpsLocation::query()->where('trip_id', $this->trip->id)->count())->toBe(2);
+        expect(GpsLocation::query()->count())->toBe(1);
     });
+
+    it('rejects a final flag that is not a boolean', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['final' => 'maybe']))
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.0.source.pointer', '/data/attributes/final');
+    });
+});
+
+it('broadcasts at once, not through the queue (ShouldBroadcastNow)', function () {
+    expect(new ReflectionClass(BusLocationUpdated::class))
+        ->implementsInterface(ShouldBroadcastNow::class)->toBeTrue();
 });
