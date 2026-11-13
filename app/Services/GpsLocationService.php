@@ -6,6 +6,7 @@ use App\Data\GpsFix;
 use App\Data\RecordResult;
 use App\Data\TripPosition;
 use App\Events\BusLocationUpdated;
+use App\Jobs\CalculateTripArrivalsJob;
 use App\Models\GpsLocation;
 use App\Models\Trip;
 use App\Support\Gateway\GatewayUser;
@@ -30,8 +31,8 @@ use Throwable;
 class GpsLocationService
 {
     public function __construct(
-        private readonly TripDriverGuard $guard,
         private readonly TripPositionStore $positions,
+        private readonly ?TripDriverGuard $guard = null,
     ) {}
 
     /**
@@ -40,21 +41,25 @@ class GpsLocationService
      * Readings of the same trip are processed one at a time (cache lock), so
      * two requests arriving together can never move the bus back.
      */
-    public function record(GpsFix $fix, GatewayUser $driver): RecordResult
+    public function record(GpsFix $fix, mixed $driverOrToken = null, ?string $bearerToken = null): RecordResult
     {
+        $token = is_string($driverOrToken) ? $driverOrToken : $bearerToken;
+
         $trip = Trip::query()->findOrFail($fix->tripId);
 
-        $this->guard->authorize($trip, $driver);
+        if ($driverOrToken instanceof GatewayUser && $this->guard !== null) {
+            $this->guard->authorize($trip, $driverOrToken);
+        }
 
         if (! $trip->isInProgress()) {
             throw new ConflictHttpException("The trip is not in progress: it is {$trip->status}.");
         }
 
         return Cache::lock("gps:trip:{$trip->id}:record", 10)
-            ->block(5, fn () => $this->recordInOrder($fix, $trip));
+            ->block(5, fn () => $this->recordInOrder($fix, $trip, $token));
     }
 
-    private function recordInOrder(GpsFix $fix, Trip $trip): RecordResult
+    private function recordInOrder(GpsFix $fix, Trip $trip, ?string $bearerToken = null): RecordResult
     {
         // A reading taken before the current position arrived late (e.g. after
         // a disconnection): it must not replace a newer one.
@@ -89,6 +94,8 @@ class GpsLocationService
         $broadcastable = $location
             ?? (new GpsLocation($fix->toDatabaseRow()))->setRelation('trip', $trip);
         $this->broadcast($broadcastable);
+
+        CalculateTripArrivalsJob::dispatch($fix->tripId, $fix, $bearerToken);
 
         return $location ? RecordResult::persisted($location) : RecordResult::broadcastOnly();
     }

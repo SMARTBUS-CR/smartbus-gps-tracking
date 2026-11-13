@@ -35,6 +35,16 @@ return [
         ],
     ],
 
+    'eta' => [
+        'url' => env('ETA_SERVICE_URL', 'http://eta-service:8000/api/v1/eta'),
+        'timeout' => (int) env('ETA_TIMEOUT_SECONDS', 15),
+    ],
+
+    'dashboard' => [
+        'url' => env('DASHBOARD_URL', 'http://dashboard:80'),
+        'timeout' => (int) env('DASHBOARD_TIMEOUT', 15),
+    ],
+
     /*
     | OpenRouteService - ruta / distancia / matriz. Integracion FUTURA.
     | It will be consumed behind a service layer, never from a controller.
