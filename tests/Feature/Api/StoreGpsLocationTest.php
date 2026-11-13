@@ -1,0 +1,343 @@
+<?php
+
+use App\Events\BusLocationUpdated;
+use App\Models\GpsLocation;
+use App\Models\Trip;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Str;
+
+use function Pest\Laravel\postJson;
+
+/*
+| HU1 — "As a system, I need to receive the GPS coordinates sent by the driver's
+| app so that I can determine the bus's current location."
+|
+| Every valid reading is ACCEPTED and BROADCAST live (HU2), but it is only
+| PERSISTED to gps_locations when it is the trip's START (its first reading) or
+| its END (the reading sent with `final: true`) — see config/gps.php and
+| App\Services\GpsLocationService.
+*/
+
+const STORE_URL = '/api/locations';
+
+beforeEach(function () {
+    // Broadcasting is asserted explicitly; no test depends on Reverb running.
+    Event::fake([BusLocationUpdated::class]);
+
+    // The driver's token, recognized by the (fake) API Gateway...
+    actingAsGatewayUser('driver-token', role: 'driver');
+
+    // ...on a trip in progress assigned to that driver.
+    $this->trip = Trip::factory()->drivenBy(TEST_USER_ID)->create();
+});
+
+describe('authorization (only the assigned driver, only while in progress)', function () {
+    it('rejects a driver who is not assigned to the trip with a JSON:API 403', function () {
+        $otherDriversTrip = Trip::factory()->create();
+
+        postJson(STORE_URL, gpsLocationPayload($otherDriversTrip->id))
+            ->assertForbidden()
+            ->assertHeader('Content-Type', 'application/vnd.api+json')
+            ->assertJsonPath('errors.0.status', '403');
+
+        expect(GpsLocation::query()->count())->toBe(0);
+        Event::assertNotDispatched(BusLocationUpdated::class);
+    });
+
+    it('rejects the assigned driver when their driver profile is inactive', function () {
+        $this->trip->driver->forceFill(['status' => 'inactive'])->save();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertForbidden();
+
+        expect(GpsLocation::query()->count())->toBe(0);
+    });
+
+    it('rejects readings of a trip that is not in progress with a JSON:API 409', function (string $state) {
+        $trip = Trip::factory()->drivenBy(TEST_USER_ID)->{$state}()->create();
+
+        postJson(STORE_URL, gpsLocationPayload($trip->id))
+            ->assertConflict()
+            ->assertJsonPath('errors.0.status', '409');
+
+        expect(GpsLocation::query()->count())->toBe(0);
+        Event::assertNotDispatched(BusLocationUpdated::class);
+    })->with(['scheduled', 'completed', 'cancelled']);
+});
+
+it('rejects readings of a trip deleted by the Dashboard with a JSON:API 404', function () {
+    $this->trip->delete(); // soft delete (trips.deleted_at)
+
+    postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+        ->assertNotFound()
+        ->assertJsonPath('errors.0.status', '404');
+
+    expect(GpsLocation::query()->count())->toBe(0);
+    Event::assertNotDispatched(BusLocationUpdated::class);
+});
+
+it('follows the trip state set by the Dashboard: only in progress accepts readings', function () {
+    $trip = Trip::factory()->drivenBy(TEST_USER_ID)->scheduled()->create();
+
+    // Not started yet.
+    postJson(STORE_URL, gpsLocationPayload($trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
+        ->assertConflict();
+
+    // The Dashboard starts the trip (POST /api/v1/operations/trips/{id}/start).
+    $trip->forceFill(['status' => Trip::STATUS_IN_PROGRESS, 'actual_departure_at' => now()])->save();
+    postJson(STORE_URL, gpsLocationPayload($trip->id, ['recorded_at' => '2026-09-07T12:01:00Z']))
+        ->assertCreated();
+
+    // The Dashboard completes it (POST /api/v1/operations/trips/{id}/complete).
+    $trip->forceFill(['status' => Trip::STATUS_COMPLETED, 'actual_arrival_at' => now()])->save();
+    postJson(STORE_URL, gpsLocationPayload($trip->id, ['recorded_at' => '2026-09-07T12:02:00Z']))
+        ->assertConflict();
+
+    expect(GpsLocation::query()->where('trip_id', $trip->id)->count())->toBe(1);
+});
+
+describe('order (a late reading never moves the bus back)', function () {
+    it('ignores a reading taken before the current position', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:05:00Z']))
+            ->assertCreated();
+
+        // Arrives now, but was taken 5 minutes before the current position.
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, [
+            'latitude' => 9.95,
+            'recorded_at' => '2026-09-07T12:00:00Z',
+        ]))
+            ->assertAccepted()
+            ->assertJsonPath('meta.persisted', false)
+            ->assertJsonPath('meta.outcome', 'stale');
+
+        expect(GpsLocation::query()->count())->toBe(1);
+        Event::assertDispatchedTimes(BusLocationUpdated::class, 1);
+    });
+
+    it('ignores a duplicate of the current position', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertCreated();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+            ->assertAccepted()
+            ->assertJsonPath('meta.outcome', 'duplicate');
+
+        expect(GpsLocation::query()->count())->toBe(1);
+        Event::assertDispatchedTimes(BusLocationUpdated::class, 1);
+    });
+
+    it('still detects duplicates after the cache is lost (unique trip_id + recorded_at)', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertCreated();
+        Cache::flush();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+            ->assertAccepted()
+            ->assertJsonPath('meta.outcome', 'duplicate');
+
+        expect(GpsLocation::query()->count())->toBe(1);
+    });
+});
+
+it('stores the accuracy reported by the device', function () {
+    postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['accuracy_meters' => 8.5]))
+        ->assertCreated()
+        ->assertJsonPath('data.attributes.accuracy_meters', 8.5);
+
+    expect(GpsLocation::query()->sole()->accuracy_meters)->toBe(8.5);
+});
+
+describe('authentication', function () {
+    it('rejects a request without a token with a JSON:API 401 and stores nothing', function () {
+        $this->defaultHeaders = []; // drop the driver's token
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+            ->assertUnauthorized()
+            ->assertHeader('Content-Type', 'application/vnd.api+json')
+            ->assertJsonPath('errors.0.status', '401');
+
+        expect(GpsLocation::query()->count())->toBe(0);
+        Event::assertNotDispatched(BusLocationUpdated::class);
+    });
+
+    it('rejects a token the API Gateway does not recognize', function () {
+        $this->withToken('stolen-or-expired-token');
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertUnauthorized();
+
+        expect(GpsLocation::query()->count())->toBe(0);
+    });
+});
+
+it('stores a valid GPS reading and returns a JSON:API resource', function () {
+    postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+        ->assertCreated()
+        ->assertHeader('Content-Type', 'application/vnd.api+json')
+        ->assertJsonStructure(['data' => ['id', 'type', 'attributes' => ['trip_id', 'latitude', 'longitude', 'speed_kmh', 'recorded_at']]])
+        ->assertJsonPath('data.type', 'gps-locations')
+        ->assertJsonPath('data.attributes.trip_id', $this->trip->id)
+        ->assertJsonPath('data.attributes.latitude', 9.93)
+        ->assertJsonPath('data.attributes.longitude', -84.08)
+        ->assertJsonPath('data.attributes.speed_kmh', 41.2)
+        ->assertJsonPath('data.attributes.recorded_at', '2026-09-07T12:00:00.000000Z');
+
+    expect(GpsLocation::query()->where('trip_id', $this->trip->id)->count())->toBe(1);
+});
+
+it('never exposes the internal PostGIS column in the response', function () {
+    postJson(STORE_URL, gpsLocationPayload($this->trip->id))
+        ->assertCreated()
+        ->assertJsonMissingPath('data.attributes.location');
+});
+
+it('derives the PostGIS point with (lng, lat) order and SRID 4326', function () {
+    $id = postJson(STORE_URL, gpsLocationPayload($this->trip->id))->json('data.id');
+
+    $point = DB::selectOne(
+        'select ST_Y(location::geometry) as lat, ST_X(location::geometry) as lng, ST_SRID(location::geometry) as srid
+         from gps_locations where id = ?',
+        [$id],
+    );
+
+    expect((float) $point->lat)->toEqualWithDelta(9.93, 1e-7)
+        ->and((float) $point->lng)->toEqualWithDelta(-84.08, 1e-7)
+        ->and((int) $point->srid)->toBe(4326);
+});
+
+it('broadcasts BusLocationUpdated on the private trip channel', function () {
+    postJson(STORE_URL, gpsLocationPayload($this->trip->id))->assertCreated();
+
+    Event::assertDispatched(BusLocationUpdated::class, function (BusLocationUpdated $event) {
+        $payload = $event->broadcastWith();
+
+        return collect($event->broadcastOn())->map->name->all() === ["private-trip.{$this->trip->id}"]
+            && $event->broadcastAs() === 'BusLocationUpdated'
+            && $payload['trip_id'] === $this->trip->id
+            && $payload['bus_id'] === $this->trip->bus_id
+            && $payload['latitude'] === 9.93
+            && $payload['longitude'] === -84.08;
+    });
+});
+
+describe('validation', function () {
+    it('rejects an invalid attribute with a JSON:API error pointing to it', function (array $attributes, string $pointer) {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, $attributes))
+            ->assertUnprocessable()
+            ->assertHeader('Content-Type', 'application/vnd.api+json')
+            ->assertJsonPath('errors.0.status', '422')
+            ->assertJsonPath('errors.0.source.pointer', $pointer);
+    })->with([
+        'latitude out of range' => [['latitude' => 999], '/data/attributes/latitude'],
+        'longitude out of range' => [['longitude' => -181], '/data/attributes/longitude'],
+        'negative speed' => [['speed_kmh' => -1], '/data/attributes/speed_kmh'],
+        'recorded_at not a date' => [['recorded_at' => 'yesterday-ish'], '/data/attributes/recorded_at'],
+        // Must be a clean 422, not a Postgres "invalid input syntax for type uuid" 500.
+        'trip_id not a UUID' => [['trip_id' => 1], '/data/attributes/trip_id'],
+    ]);
+
+    it('rejects a missing longitude', function () {
+        $payload = gpsLocationPayload($this->trip->id);
+        unset($payload['data']['attributes']['longitude']);
+
+        postJson(STORE_URL, $payload)
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.0.source.pointer', '/data/attributes/longitude');
+    });
+
+    it('rejects a trip that does not exist', function () {
+        postJson(STORE_URL, gpsLocationPayload((string) Str::uuid7()))
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.0.source.pointer', '/data/attributes/trip_id');
+    });
+
+    it('rejects a document with the wrong JSON:API type', function () {
+        $payload = gpsLocationPayload($this->trip->id);
+        $payload['data']['type'] = 'locations';
+
+        postJson(STORE_URL, $payload)
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.0.source.pointer', '/data/type');
+    });
+});
+
+describe('only the start and the end of the trip are stored (transmit != persist)', function () {
+    it('stores the first reading of the trip: its start', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
+            ->assertCreated()
+            ->assertJsonPath('data.attributes.recorded_at', '2026-09-07T12:00:00.000000Z');
+
+        expect(GpsLocation::query()->where('trip_id', $this->trip->id)->count())->toBe(1);
+    });
+
+    it('does not store the readings during the trip, however far or late, but broadcasts every one', function (array $attributes) {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
+            ->assertCreated();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, $attributes))
+            ->assertAccepted()
+            ->assertHeader('Content-Type', 'application/vnd.api+json')
+            ->assertJsonMissingPath('data')
+            ->assertJsonPath('meta.persisted', false)
+            ->assertJsonPath('meta.outcome', 'broadcast_only');
+
+        expect(GpsLocation::query()->where('trip_id', $this->trip->id)->count())->toBe(1);
+
+        // The passenger's map gets it anyway.
+        Event::assertDispatched(BusLocationUpdated::class, 2);
+        Event::assertDispatched(BusLocationUpdated::class, fn (BusLocationUpdated $event) => $event->locationId === null
+            && $event->latitude === (float) ($attributes['latitude'] ?? 9.93));
+    })->with([
+        '5 s later, a few meters away' => [['latitude' => 9.93003, 'recorded_at' => '2026-09-07T12:00:05Z']],
+        '10 s later, 3 km away' => [['latitude' => 9.957, 'recorded_at' => '2026-09-07T12:00:10Z']],
+        '10 min later, not moved' => [['recorded_at' => '2026-09-07T12:10:00Z']],
+        'explicitly not final' => [['final' => false, 'recorded_at' => '2026-09-07T12:00:15Z']],
+    ]);
+
+    it('stores the reading marked final: the end of the trip', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
+            ->assertCreated();
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['latitude' => 9.94, 'recorded_at' => '2026-09-07T12:20:00Z']))
+            ->assertAccepted();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, [
+            'latitude' => 9.96,
+            'recorded_at' => '2026-09-07T12:40:00Z',
+            'final' => true,
+        ]))
+            ->assertCreated()
+            ->assertJsonPath('data.attributes.latitude', 9.96);
+
+        $stored = GpsLocation::query()->where('trip_id', $this->trip->id)->orderBy('recorded_at')->pluck('latitude')->all();
+        expect($stored)->toBe([9.93, 9.96]); // start and end
+        Event::assertDispatched(BusLocationUpdated::class, 3);
+    });
+
+    it('a final reading that is the first one is stored once', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['final' => true]))->assertCreated();
+
+        expect(GpsLocation::query()->count())->toBe(1);
+    });
+
+    it('after the cache is lost, the stored start still counts: later readings are not stored', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['recorded_at' => '2026-09-07T12:00:00Z']))
+            ->assertCreated();
+        Cache::flush();
+
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['latitude' => 9.95, 'recorded_at' => '2026-09-07T12:05:00Z']))
+            ->assertAccepted()
+            ->assertJsonPath('meta.outcome', 'broadcast_only');
+
+        expect(GpsLocation::query()->count())->toBe(1);
+    });
+
+    it('rejects a final flag that is not a boolean', function () {
+        postJson(STORE_URL, gpsLocationPayload($this->trip->id, ['final' => 'maybe']))
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.0.source.pointer', '/data/attributes/final');
+    });
+});
+
+it('broadcasts at once, not through the queue (ShouldBroadcastNow)', function () {
+    expect(new ReflectionClass(BusLocationUpdated::class))
+        ->implementsInterface(ShouldBroadcastNow::class)->toBeTrue();
+});

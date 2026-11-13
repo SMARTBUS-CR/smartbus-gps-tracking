@@ -1,0 +1,27 @@
+# Disposable PostgreSQL + PostGIS database used ONLY by the automated tests.
+#
+# The real operations DB (Aiven) is owned by another team and is never touched by
+# the test suite: tests run the schema in database/migrations-testing against this
+# container instead (see phpunit.xml and tests/TestCase.php).
+#
+#   docker compose -f docker-compose.testing.yml up -d
+#   php artisan test
+#
+# GitHub Actions starts the same image as a service (.github/workflows/ci-cd.yml).
+services:
+    gps-testing-db:
+        image: postgis/postgis:17-3.5
+        container_name: smartbus-gps-testing-db
+        environment:
+            POSTGRES_DB: smartbus_gps_testing
+            POSTGRES_USER: smartbus
+            POSTGRES_PASSWORD: smartbus
+        ports:
+            - "54329:5432"
+        tmpfs:
+            - /var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U smartbus -d smartbus_gps_testing"]
+            interval: 2s
+            timeout: 5s
+            retries: 30

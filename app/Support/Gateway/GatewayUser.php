@@ -5,10 +5,11 @@ namespace App\Support\Gateway;
 use Illuminate\Contracts\Auth\Authenticatable;
 
 /**
- * "Usuario" reconstruido a partir de las cabeceras que reenvia el API Gateway.
+ * A "user" resolved from the Bearer token the API Gateway forwards
+ * (see App\Http\Middleware\IdentifyFromGateway).
  *
- * NO consulta la BD (no hay tabla `users` aqui). Es solo el sujeto de la
- * request para las autorizaciones de canal (routes/channels.php).
+ * It never hits the DB (there is no `users` table here). It is only the subject
+ * of the request for channel authorization (routes/channels.php).
  */
 final class GatewayUser implements Authenticatable
 {
@@ -16,9 +17,9 @@ final class GatewayUser implements Authenticatable
      * @param  list<string>  $roles
      */
     public function __construct(
-        public readonly int $id,
+        public readonly string $id,
         public readonly array $roles = [],
-        public readonly ?int $companyId = null,
+        public readonly ?string $companyId = null,
     ) {}
 
     public function hasRole(string $role): bool
@@ -33,7 +34,7 @@ final class GatewayUser implements Authenticatable
         return 'id';
     }
 
-    public function getAuthIdentifier(): int
+    public function getAuthIdentifier(): string
     {
         return $this->id;
     }
@@ -55,7 +56,7 @@ final class GatewayUser implements Authenticatable
 
     public function setRememberToken($value): void
     {
-        // no-op: sin sesion, sin "remember me"
+        // no-op: no session, no "remember me"
     }
 
     public function getRememberTokenName(): string

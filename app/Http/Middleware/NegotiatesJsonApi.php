@@ -8,14 +8,15 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Content negotiation exigido por el estandar JSON:API para todas las rutas /api.
+ * JSON:API content negotiation for every route in the `api` group.
  *
- * Reglas (https://jsonapi.org/format/#content-negotiation):
- *  - 415 si el Content-Type es application/vnd.api+json CON parametros de media type.
- *  - 406 si el Accept incluye application/vnd.api+json y TODAS sus apariciones
- *        llevan parametros de media type.
+ * Rules (https://jsonapi.org/format/#content-negotiation):
+ *  - 415 when the Content-Type is application/vnd.api+json WITH media type parameters.
+ *  - 406 when the Accept header mentions application/vnd.api+json and every
+ *        occurrence of it carries media type parameters.
  *
- * Ademas normaliza el Accept para que Laravel trate la peticion como "espera JSON".
+ * It also normalizes the Accept header so Laravel treats the request as
+ * "expects JSON".
  */
 class NegotiatesJsonApi
 {
@@ -45,7 +46,7 @@ class NegotiatesJsonApi
                 'The JSON:API media type in the Accept header must be sent without media type parameters.');
         }
 
-        // Hace que $request->expectsJson() y wantsJson() sean verdaderos.
+        // Make $request->expectsJson() / wantsJson() return true.
         if (! $request->expectsJson()) {
             $request->headers->set('Accept', $jsonApi);
         }

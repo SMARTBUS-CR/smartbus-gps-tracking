@@ -9,9 +9,9 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
 /**
- * NOTA: la tabla `users` NO existe en la BD de operaciones (vive en el microservicio
- * de Auth). Este modelo queda como default de Laravel para no romper config/auth.php,
- * pero el microservicio GPS no lo consulta ni autentica.
+ * NOTE: the `users` table does NOT exist in the operations DB (it lives in the
+ * Auth microservice). This model is kept as Laravel's default so config/auth.php
+ * does not break, but the GPS microservice never queries it or authenticates.
  */
 class User extends Authenticatable
 {

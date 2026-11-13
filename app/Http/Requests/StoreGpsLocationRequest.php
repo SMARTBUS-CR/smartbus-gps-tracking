@@ -7,14 +7,14 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * Valida el cuerpo JSON:API de  POST /gps/locations.
+ * Validates the JSON:API request body of POST /api/gps/locations.
  *
- * Forma esperada:
+ * Expected shape:
  *   {
  *     "data": {
  *       "type": "gps-locations",
  *       "attributes": {
- *         "trip_id": 25,
+ *         "trip_id": "01a09332-3457-7315-885e-4ebb218f7262",
  *         "latitude": 10.4631,
  *         "longitude": -83.9921,
  *         "speed_kmh": 38.5,
@@ -23,13 +23,13 @@ use Illuminate\Validation\Rule;
  *     }
  *   }
  *
- * Solo valida FORMA y coherencia basica. Las reglas de negocio (viaje activo,
- * lectura no demasiado antigua, orden temporal...) viven en GpsLocationService.
+ * Only shape and basic sanity are checked here. Business rules (trip active,
+ * reading not too old, chronological order, ...) live in GpsLocationService.
  */
 class StoreGpsLocationRequest extends FormRequest
 {
     /**
-     * La autenticacion/autorizacion la resuelve el API Gateway.
+     * Authentication / authorization is handled by the API Gateway.
      */
     public function authorize(): bool
     {
@@ -41,21 +41,74 @@ class StoreGpsLocationRequest extends FormRequest
      */
     public function rules(): array
     {
+        // Note: `uuid` + `bail` on trip_id keep a non-UUID away from the `exists` query
+        // (Postgres would throw "invalid input syntax for type uuid" instead of a 422).
         return [
             'data' => ['required', 'array'],
+
+            /**
+             * JSON:API resource type.
+             *
+             * @example gps-locations
+             */
             'data.type' => ['required', 'string', Rule::in(['gps-locations'])],
             'data.attributes' => ['required', 'array'],
 
-            'data.attributes.trip_id' => ['required', 'integer', 'exists:trips,id'],
+            /**
+             * UUID of the trip the reading belongs to. The trip must exist.
+             *
+             * @example 01a09332-3457-7315-885e-4ebb218f7262
+             */
+            'data.attributes.trip_id' => ['bail', 'required', 'uuid', 'exists:trips,id'],
+
+            /**
+             * Latitude in decimal degrees (WGS 84).
+             *
+             * @example 9.9281
+             */
             'data.attributes.latitude' => ['required', 'numeric', 'between:-90,90'],
+
+            /**
+             * Longitude in decimal degrees (WGS 84).
+             *
+             * @example -84.0907
+             */
             'data.attributes.longitude' => ['required', 'numeric', 'between:-180,180'],
+
+            /**
+             * Speed reported by the device, in km/h.
+             *
+             * @example 38.5
+             */
             'data.attributes.speed_kmh' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:400'],
+
+            /**
+             * Accuracy radius reported by the device, in meters (optional).
+             *
+             * @example 8.5
+             */
+            'data.attributes.accuracy_meters' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100000'],
+
+            /**
+             * When the device took the reading (ISO 8601). Stored in UTC.
+             *
+             * @example 2026-09-03T15:00:00Z
+             */
             'data.attributes.recorded_at' => ['required', 'date'],
+
+            /**
+             * `true` on the last reading of the trip (the app sends it right
+             * before "Finalizar recorrido"). It is stored as the trip's end
+             * position. Optional, `false` by default.
+             *
+             * @example false
+             */
+            'data.attributes.final' => ['sometimes', 'boolean'],
         ];
     }
 
     /**
-     * Nombres legibles para los mensajes de error (":attribute").
+     * Readable names for the ":attribute" placeholder in error messages.
      *
      * @return array<string, string>
      */
@@ -69,12 +122,14 @@ class StoreGpsLocationRequest extends FormRequest
             'data.attributes.latitude' => 'latitude',
             'data.attributes.longitude' => 'longitude',
             'data.attributes.speed_kmh' => 'speed_kmh',
+            'data.attributes.accuracy_meters' => 'accuracy_meters',
             'data.attributes.recorded_at' => 'recorded_at',
+            'data.attributes.final' => 'final',
         ];
     }
 
     /**
-     * DTO inmutable con la lectura ya validada.
+     * The validated reading as an immutable DTO.
      */
     public function toGpsFix(): GpsFix
     {

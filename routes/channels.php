@@ -3,36 +3,38 @@
 use App\Models\Trip;
 use App\Support\Gateway\GatewayUser;
 use Illuminate\Support\Facades\Broadcast;
+use Illuminate\Support\Str;
 
 /*
 |--------------------------------------------------------------------------
 | Broadcast Channels - SmartBus GPS Microservice
 |--------------------------------------------------------------------------
-| Autorizacion del canal PRIVADO  trip.{tripId}.
+| Authorization for the PRIVATE channel  trip.{tripId}.
 |
-| Privado (no publico) porque:
-|   - las posiciones en vivo de la flota no deben poder scrapearse anonimamente,
-|   - obliga a pasar por el API Gateway (identidad verificada) para suscribirse,
-|   - permite cortar el acceso por viaje/rol sin tocar el evento.
+| Private (not public) because:
+|   - the fleet's live positions must not be scrapeable anonymously,
+|   - it forces subscribers through the API Gateway (verified identity),
+|   - it allows cutting access per trip/role without touching the event.
 |
-| Como este servicio NO autentica, el "usuario" lo reconstruye
-| IdentifyFromGateway desde las cabeceras del Gateway (config/gateway.php).
-| La request de suscripcion llega a  POST /gps/broadcasting/auth.
+| Since this service does NOT own users, the "user" is resolved by
+| IdentifyFromGateway from the forwarded Bearer token (config/gateway.php).
+| The subscription request arrives at  POST /api/gps/broadcasting/auth.
 */
 
 Broadcast::channel('trip.{tripId}', function (?GatewayUser $user, string $tripId): bool {
-    // Sin identidad reenviada por el Gateway -> no se autoriza.
+    // No valid Bearer token (Authentication Service) -> not authorized.
     if (! $user instanceof GatewayUser) {
         return false;
     }
 
-    if (! ctype_digit($tripId)) {
+    // A non-UUID can never match a trip (and would make Postgres throw).
+    if (! Str::isUuid($tripId)) {
         return false;
     }
 
-    $trip = Trip::query()->find((int) $tripId, ['id', 'status']);
+    $trip = Trip::query()->find($tripId, ['id', 'status']);
 
-    // Solo se puede seguir un viaje que existe y esta en curso / programado.
+    // A trip can only be followed while it exists and is scheduled / in progress.
     return $trip !== null
         && in_array($trip->status, ['scheduled', 'in_progress'], true);
 });

@@ -13,28 +13,30 @@ El backend **no** cambia por esto: este documento es el contrato.
 
 | Campo | Tipo | Uso en el mapa |
 |---|---|---|
-| `id` | int | id de la lectura. Descartar si `id` ≤ al último aplicado |
-| `trip_id` | int | viaje al que pertenece |
-| `bus_id` | int | qué bus (un viaje = un bus) |
+| `id` | string (UUID) \| null | id de la lectura guardada (`null` si se transmitió sin guardarse en el historial) |
+| `trip_id` | string (UUID) | viaje al que pertenece |
+| `bus_id` | string (UUID) | qué bus (un viaje = un bus) |
 | `latitude` | number | posición del marcador |
 | `longitude` | number | posición del marcador |
 | `speed_kmh` | number \| null | opcional (mostrar velocidad) |
+| `accuracy_meters` | number \| null | precisión del GPS del conductor (opcional) |
 | `recorded_at` | string ISO-8601 UTC | momento real de la lectura. Ordenar / descartar viejas |
 
 ```json
 {
-  "id": 14,
-  "trip_id": 25,
-  "bus_id": 1,
+  "id": "01a0e959-ed71-709e-a5a9-6c1436b11014",
+  "trip_id": "01a09332-3457-7315-885e-4ebb218f7262",
+  "bus_id": "01a09332-1111-7315-885e-4ebb218f7262",
   "latitude": 9.9367,
   "longitude": -84.1067,
   "speed_kmh": 44.1,
+  "accuracy_meters": 8.5,
   "recorded_at": "2026-09-03T18:00:00.000000Z"
 }
 ```
 
 Para "la posición mostrada es la última recibida" (AC HU3): quedarse siempre con
-el mayor `recorded_at` (o `id`). Un evento con `recorded_at` anterior al aplicado
+el mayor `recorded_at`. Un evento con `recorded_at` anterior al aplicado
 se ignora (llegan desordenados en redes móviles).
 
 ## 2. Cómo conecta Flutter
@@ -51,13 +53,13 @@ final echo = Echo<PusherChannelsFlutter, PusherChannel>(
   broadcaster: EchoBroadcasterType.Reverb,
   options: EchoOptions(
     key: const String.fromEnvironment('REVERB_APP_KEY'), // el KEY no es secreto
-    host: 'smartbus-gps-ws.onrender.com',   // host PROPIO de Reverb (NO el Gateway)
+    host: 'smartbus-api-gateway.onrender.com', // el nginx del Gateway reenvía /app/* a Reverb
     port: 443,
     forceTLS: true,
-    // El WebSocket va directo a Reverb; solo la auth del canal privado pasa por el Gateway:
+    // WebSocket y autorización del canal privado pasan por el Gateway:
     authEndpoint: 'https://smartbus-api-gateway.onrender.com/api/gps/broadcasting/auth',
     auth: EchoAuth(headers: {
-      'Authorization': 'Bearer $userToken', // lo valida el Gateway, no el GPS service
+      'Authorization': 'Bearer $userToken', // lo valida el Gateway y lo reenvía al GPS service
       'Accept': 'application/json',
     }),
   ),
@@ -65,9 +67,11 @@ final echo = Echo<PusherChannelsFlutter, PusherChannel>(
 ```
 
 > `key / port / scheme` = las variables `REVERB_*` del backend.
-> `host` = el host donde corre `php artisan reverb:start` (su propio servicio en
-> Render), **no** el Gateway: el proxy HTTP del Gateway no hace el upgrade a WebSocket.
-> `authEndpoint` = `<gateway>/api/gps/broadcasting/auth` (esa sí pasa por el Gateway).
+> `host` = el **Gateway**: su nginx reenvía `wss://<gateway>/app/<KEY>` a Reverb (el proxy
+> HTTP de Laravel no hace el upgrade a WebSocket, pero nginx sí).
+> `authEndpoint` = `<gateway>/api/gps/broadcasting/auth`. Cualquier usuario autenticado
+> puede seguir un viaje programado o en curso; se rechaza sin token, con token inválido o
+> si el viaje terminó, se canceló o no existe.
 > Ver [GATEWAY.md §4](GATEWAY.md).
 
 ## 3. Suscribirse a un viaje
@@ -128,14 +132,29 @@ Cuando el pasajero abre el mapa **a mitad de viaje**, necesita la posición actu
 
 ```
 GET /api/gps/trips/{tripId}/location
-  → 200  { "data": { "type": "gps-locations", "id": "…",
-                     "attributes": { trip_id, latitude, longitude, speed_kmh, recorded_at } } }
-  → 404  si el viaje no existe o aún no tiene lecturas
+  → 200  { "data": { "type": "trip-trackings", "id": "<tripId>",
+           "attributes": {
+             "trip_id": "<tripId>",
+             "status": "in_progress",          // scheduled | in_progress | completed | cancelled
+             "freshness": "live",              // live | stale | no_signal | not_tracking
+             "age_seconds": 4,                 // null si no hay posición
+             "position": {                     // null hasta la primera lectura
+               "latitude": 9.93, "longitude": -84.08, "speed_kmh": 38.5,
+               "accuracy_meters": 8.5, "recorded_at": "2026-11-09T15:00:00.000000Z" } } } }
+  → 404  si el viaje no existe
 ```
 
-Respuesta JSON:API, mismo `GpsLocationResource` que el resto (soporta `?include=trip`).
-Modelo Dart: el mismo `BusLocation.fromJson` de §1 (el `data.attributes` tiene las
-mismas claves que el payload del evento, sin `id` dentro de attributes → usar `data.id`).
+Qué mostrar según `freshness`:
+
+| freshness | Significa | En el mapa |
+|---|---|---|
+| `live` | posición de los últimos 30 s | bus normal |
+| `stale` | posición de hace 30 s – 5 min | bus en gris / "hace X min" |
+| `no_signal` | sin posición o de hace más de 5 min | "sin señal" |
+| `not_tracking` | el viaje no está en curso | "aún no sale" / "viaje terminado" |
+
+`position` trae siempre la **última posición aceptada** (aunque no se haya guardado en el
+historial), así que coincide con el último `BusLocationUpdated`.
 
 ## 6. Flujo completo HU3
 
@@ -144,6 +163,8 @@ abrir mapa del viaje 25
   → GET  /api/gps/trips/25/location                        (posición actual)
   → echo.private('trip.25').listen('.BusLocationUpdated')  (updates)
   → cada evento: si recorded_at > actual, mover marcador (sin recargar)
+  → si dejan de llegar posiciones (freshness = no_signal): repetir el GET;
+    status = completed → mostrar "viaje terminado" y salir del canal
   → al reconectar: repetir el GET
   → salir de la pantalla: echo.leave('trip.25')
 ```
@@ -152,7 +173,7 @@ abrir mapa del viaje 25
 
 Suscriptor WebSocket (protocolo Pusher, Node) → `private-trip.1`:
 1. conecta a Reverb, obtiene `socket_id`
-2. `POST /api/gps/broadcasting/auth` con `X-User-Id` → `200` + firma
+2. `POST /api/gps/broadcasting/auth` con `Authorization: Bearer <token>` → `200` + firma
 3. `pusher:subscribe` → `subscription_succeeded`
 4. `POST /api/gps/locations` (coordenada real)
 5. **recibe** `BusLocationUpdated` en `private-trip.1` con el payload exacto de arriba

@@ -2,30 +2,46 @@
 
 /*
 |--------------------------------------------------------------------------
-| Contrato con el API Gateway
+| API Gateway contract
 |--------------------------------------------------------------------------
-| El microservicio GPS NO autentica: confia en la identidad que el API
-| Gateway (Laravel, en Render) ya verifico y reenvia en cabeceras HTTP.
+| The GPS microservice does NOT own users or tokens. The API Gateway validates
+| the client's  Authorization: Bearer <token>  and forwards the SAME header to
+| this service (it does not inject X-User-* headers).
 |
-| El Gateway ya usa este mismo patron con el Authentication Service:
-|   valida  Authorization: Bearer <token>  y reenvia  X-User-Id / X-User-Roles.
+| To know WHO the user is, IdentifyFromGateway asks the API Gateway itself
+| (never the Authentication Service directly, so every auth check goes through
+| the Gateway):
 |
-| El Gateway DEBE, para toda request a  /api/gps/*  (incl. /api/gps/broadcasting/auth):
-|   - validar el token,
-|   - reenviar X-User-Id (y X-User-Roles),
-|   - eliminar cualquier X-User-* que venga del cliente (anti-spoofing).
+|     GET {identity.url}/api/auth/user?include=roles     Authorization: Bearer <token>
 |
-| La red entre Gateway y este servicio se asume de confianza (no expuesta).
+| The Gateway validates the token (validate.token) and proxies the request to
+| the Authentication Service. The answer is cached per token.
+|
+| Every API route except /api/ping requires a user (RequireGatewayUser), so a
+| request without a valid token gets a 401 even if it reaches this service
+| without going through the Gateway.
 */
 
 return [
 
-    'headers' => [
-        // Nombres que YA usa el Gateway de SmartBus.
-        'user_id' => env('GATEWAY_HEADER_USER_ID', 'X-User-Id'),
-        'roles' => env('GATEWAY_HEADER_ROLES', 'X-User-Roles'),
-        // El Gateway aun NO envia company_id; queda configurable por si se agrega.
-        'company_id' => env('GATEWAY_HEADER_COMPANY_ID', 'X-User-Company-Id'),
+    'identity' => [
+        // Base URL of the API Gateway (Render), e.g. https://smartbus-api-gateway-dev.onrender.com
+        'url' => env('GATEWAY_URL', 'http://localhost:8001'),
+
+        // Gateway route that returns the token's user as JSON:API, with its roles.
+        'user_path' => env('GATEWAY_USER_PATH', '/api/auth/user?include=roles'),
+
+        // Seconds to wait for the Gateway. On Render a request takes ~2–4 s with
+        // spikes; 5 s cut valid checks off, and drivers were signed out.
+        'timeout' => (int) env('GATEWAY_TIMEOUT', 15),
+
+        // Seconds a resolved identity is cached per token (only successes are cached).
+        'cache_ttl' => (int) env('GATEWAY_IDENTITY_CACHE_TTL', 300),
+
+        // Seconds the LAST identity confirmed for a token is kept, to be used
+        // only when the Gateway cannot answer (slow, down, 5xx / 429). A token
+        // the Gateway rejects is forgotten at once.
+        'last_known_ttl' => (int) env('GATEWAY_IDENTITY_LAST_KNOWN_TTL', 86400),
     ],
 
 ];

@@ -3,25 +3,40 @@
 namespace App\Http\Resources;
 
 use App\Http\Resources\JsonApi\JsonApiResource;
+use App\Models\Trip;
+use Illuminate\Http\Request;
 
 /**
- * Recurso JSON:API para `trips`.
+ * JSON:API resource for `trips`.
  *
- * type -> "trips". Se usa sobre todo como recurso incluido
- * (GET /gps/locations?include=trip) para el mapa del pasajero.
- * Solo expone lo que el cliente necesita, no toda la fila.
+ * type -> "trips". Included in a GPS reading with `?include=trip`. Only exposes what the clients
+ * need, not the whole row (no planned route snapshot, no cancellation data).
+ *
+ * @mixin Trip
  */
 class TripResource extends JsonApiResource
 {
+    /**
+     * Explicit JSON:API type, so the OpenAPI docs (Scramble) show the real value.
+     */
+    public function toType(Request $request): string
+    {
+        return 'trips';
+    }
+
     public $attributes = [
-        'route_id',
+        'status',
+        'route_pattern_id',
         'bus_id',
         'driver_id',
-        'status',
-        'started_at',
+        'service_date',
+        'scheduled_departure_at',
+        'scheduled_arrival_at',
+        'actual_departure_at',
+        'actual_arrival_at',
     ];
 
     public $relationships = [
-        // 'route', 'bus', 'driver'  -> se abren cuando alguna HU los pida
+        // 'route_pattern', 'bus', 'driver' -> add these when a user story needs them.
     ];
 }

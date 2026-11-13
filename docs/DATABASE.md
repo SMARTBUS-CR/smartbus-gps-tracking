@@ -1,79 +1,82 @@
-# Base de datos de operaciones — esquema existente
+# Base de datos de operaciones — esquema que usa GPS
 
-> BD compartida `defaultdb` (PostgreSQL 18 + PostGIS, Aiven).
-> **Administrada por el equipo de BD. Este microservicio NO crea ni modifica estas tablas.**
-> Documento generado por introspección (`php artisan db:table`) el 2026-09-03.
+> BD compartida `defaultdb` (PostgreSQL + PostGIS, Aiven).
+> **Las tablas las define el Dashboard** (`smartbus-dashboard-admin`, `database/migrations`,
+> rama `dev`, migraciones del 2026-10-13). **Este microservicio no crea ni migra tablas.**
+> Para los tests hay una copia del esquema solo de prueba en
+> [`database/migrations-testing/`](../database/migrations-testing) (nunca se corre contra Aiven).
 
-PostGIS confirmado activo (existe `public.spatial_ref_sys`).
+## Qué hace GPS con cada tabla
 
-## Convención de IDs — IMPORTANTE
+| Tabla | GPS | Para qué |
+|---|---|---|
+| `trips` | lee | Saber si el viaje está en curso y quién es su conductor (lo inicia / termina el Dashboard) |
+| `drivers` | lee | Saber si el usuario del token es el conductor asignado |
+| `gps_locations` | **escribe** | Muestras históricas de posición |
+| `companies`, `routes`, `route_patterns`, `route_schedules`, `buses` | no (solo claves foráneas de `trips`) | — |
 
-| Tabla    | PK      | Tipo          |
-|----------|---------|---------------|
-| users    | id      | bigint        |
-| companies| id      | bigint        |
-| buses    | id      | bigint        |
-| routes   | id      | bigint        |
-| trips    | id      | bigint        |
-| gps_locations | id | bigint        |
-| **drivers** | **id** | **uuid** ⚠️ |
+## Convención de IDs
 
-`drivers` usa **UUID** como PK, y `trips.driver_id` es **uuid**. El resto de FKs son `bigint`.
+Todas las PK y FK son `uuid` (UUIDv7) sin DEFAULT en la BD: el UUID lo genera quien inserta.
+GPS solo inserta en `gps_locations` (`HasUuids`). Cualquier id que llegue de fuera se valida
+como UUID **antes** de consultar (Postgres lanza `invalid input syntax for type uuid`).
 
 ---
 
 ## trips
-| Columna       | Tipo                          | Notas |
-|---------------|-------------------------------|-------|
-| id            | bigint (identity)             | PK |
-| route_id      | bigint                        | FK → routes.id (ON DELETE CASCADE) |
-| bus_id        | bigint                        | FK → buses.id (ON DELETE CASCADE) |
-| driver_id     | uuid                          | FK → drivers.id (ON DELETE CASCADE) |
-| status        | varchar(20)                   | default `'scheduled'` — índice |
-| started_at    | timestamp(0), null            | |
-| completed_at  | timestamp(0), null            | |
-| created_at / updated_at | timestamp(0), null  | |
+| Columna | Tipo | Notas |
+|---|---|---|
+| id | uuid | PK |
+| company_id | uuid | FK companies |
+| route_pattern_id | uuid | FK route_patterns (dirección / variante de la ruta) |
+| route_schedule_id | uuid | FK route_schedules |
+| bus_id, driver_id | uuid | FK compuestas con `company_id`: bus y conductor **de la misma compañía** |
+| service_date | date | |
+| status | varchar(20) | `scheduled` · `in_progress` · `completed` · `cancelled` |
+| scheduled_departure_at / scheduled_arrival_at | timestamptz(6) | Planificado por el Dashboard |
+| actual_departure_at / actual_arrival_at | timestamptz(6) null | Los escribe el Dashboard al iniciar / terminar |
+| planned_route_snapshot | jsonb | Copia del recorrido (no se usa todavía) |
+| cancellation_reason, cancelled_at | | Los escribe el Dashboard |
+| deleted_at | timestamptz null | Borrado lógico del Dashboard. Para GPS un viaje borrado **no existe**: 404 al enviar o consultar la posición, canal rechazado |
+
+**`trips_execution_check`** (la BD lo exige):
+
+| status | Requiere |
+|---|---|
+| `scheduled` | sin `actual_*` ni datos de cancelación |
+| `in_progress` | `actual_departure_at` |
+| `completed` | `actual_departure_at` + `actual_arrival_at` (llegada ≥ salida) |
+| `cancelled` | `cancelled_at` + `cancellation_reason` |
+
+Las transiciones las hace el Dashboard (`POST /api/v1/operations/trips/{id}/start | complete`).
+GPS solo acepta coordenadas del conductor asignado mientras el viaje está `in_progress`.
 
 ## drivers
-| Columna    | Tipo         | Notas |
-|------------|--------------|-------|
-| id         | uuid         | PK (no autoincrement, no default → lo genera la app que inserta) |
-| user_id    | bigint       | UNIQUE. ID opaco del microservicio de Auth (sin FK, sin tabla `users` local) |
-| company_id | bigint       | FK → companies.id (ON DELETE CASCADE) |
-| license    | varchar(30)  | |
-| status     | varchar(20)  | default `'active'` |
-| created_at / updated_at | timestamp(0), null | |
+| Columna | Tipo | Notas |
+|---|---|---|
+| id | uuid | PK |
+| company_id | uuid | FK companies |
+| user_id | uuid | Usuario del microservicio de Auth. **Único por compañía**: una persona puede ser conductora en varias compañías |
+| license, license_expires_at, employment_starts_on, employment_ends_on | | |
+| status | varchar(20) | `active` · `inactive` |
+| deleted_at | | soft delete |
+
+"Es el conductor del viaje" = `drivers.id = trips.driver_id` **y** `drivers.user_id` = usuario del
+token **y** `status = active` (sin borrar). Se parte siempre del viaje, nunca del usuario.
 
 ## gps_locations
-| Columna     | Tipo                     | Notas |
-|-------------|--------------------------|-------|
-| id          | bigint (identity)        | PK |
-| trip_id     | bigint                   | FK → trips.id (ON DELETE CASCADE) — índice |
-| latitude    | numeric(10,7)            | NOT NULL |
-| longitude   | numeric(10,7)            | NOT NULL |
-| speed_kmh   | numeric(8,2)             | NULL |
-| recorded_at | timestamp(0) w/o tz      | NOT NULL — índice. Se guarda en UTC |
-| location    | geography(Point,4326)    | NULL. Punto = (longitude, latitude) — ver docs/POSTGIS.md |
-| created_at / updated_at | timestamp(0), null | |
+| Columna | Tipo | Notas |
+|---|---|---|
+| id | uuid | PK, `HasUuids` |
+| trip_id | uuid | FK trips (`restrictOnDelete`) |
+| latitude, longitude | numeric(10,7) | Con CHECK de rango |
+| speed_kmh | numeric(8,2) null | 0–400 |
+| accuracy_meters | numeric(10,2) null | Precisión del dispositivo |
+| recorded_at | timestamptz(6) | Cuándo tomó la lectura el teléfono |
+| received_at | timestamptz(6) | Cuándo la recibió GPS (default `now()`) |
+| location | geography(Point,4326) null | Derivado de lat/lng — ver [POSTGIS.md](POSTGIS.md) |
 
-Índices: `gps_locations_trip_id_index`, `gps_locations_recorded_at_index`.
+**`UNIQUE (trip_id, recorded_at)`**: una lectura repetida no se puede guardar dos veces.
 
-## buses
-`id` bigint · `company_id` bigint (FK companies) · `plate_number` varchar UNIQUE · `unit_number` varchar · `brand?` · `model?` · `year?` smallint · `capacity` smallint default 40 · `is_active` bool default true · timestamps.
-
-## routes
-`id` bigint · `company_id` bigint (FK companies) · `code` varchar · `name` varchar · `description?` text · `origin` varchar · `destination` varchar · `distance_km?` numeric(8,2) · `estimated_duration_minutes?` smallint · `is_active` bool default true · timestamps.
-
-## companies / company_user
-Existen. `companies.id` es bigint. `company_user` es pivote (bigint↔bigint).
-
-## users — ⚠️ NO EXISTE en esta BD
-Introspección 2026-09-03: la BD `defaultdb` **no tiene** tabla `users`
-(tablas reales: buses, companies, company_user, drivers, gps_locations, migrations, routes, trips + spatial_ref_sys).
-
-`drivers.user_id` es un `bigint` **sin FK declarada** → es un identificador opaco hacia el
-microservicio de **Auth** (que tiene su propia BD). Este microservicio GPS trata `user_id`
-como un valor que pasa de largo; NO hace join contra `users`.
-
-El modelo `Driver` **no** define relación `user()`. `user_id` se expone como
-atributo entero y se pasa de largo.
+## users — no existe en esta BD
+Vive en el microservicio de Auth. `drivers.user_id` es un identificador opaco hacia ese servicio.

@@ -5,44 +5,52 @@ namespace App\Data;
 use Carbon\CarbonImmutable;
 
 /**
- * Una lectura GPS ya validada, lista para persistir / transmitir.
+ * A validated GPS reading, ready to be persisted and transmitted.
  *
- * Objeto inmutable que desacopla el transporte (HTTP/JSON:API) de la logica
- * de negocio: el controller construye un GpsFix desde el request y el service
- * solo conoce este tipo, no la forma del request.
+ * Immutable value object that decouples the transport (HTTP / JSON:API) from the
+ * business logic: the controller builds a GpsFix from the request, and the
+ * service only ever sees this type, never the request shape.
  */
 final readonly class GpsFix
 {
     public function __construct(
-        public int $tripId,
+        public string $tripId,
         public float $latitude,
         public float $longitude,
         public ?float $speedKmh,
         public CarbonImmutable $recordedAt,
+        public ?float $accuracyMeters = null,
+        /** Last reading of the trip, sent right before "Finalizar recorrido". */
+        public bool $isFinal = false,
     ) {}
 
     /**
      * @param array{
-     *     trip_id: int|string,
+     *     trip_id: string,
      *     latitude: int|float|string,
      *     longitude: int|float|string,
      *     speed_kmh?: int|float|string|null,
-     *     recorded_at: string
-     * } $attributes  Atributos JSON:API ya validados.
+     *     accuracy_meters?: int|float|string|null,
+     *     recorded_at: string,
+     *     final?: bool|int|string|null
+     * } $attributes  JSON:API attributes already validated.
      */
     public static function fromAttributes(array $attributes): self
     {
         return new self(
-            tripId: (int) $attributes['trip_id'],
+            tripId: (string) $attributes['trip_id'],
             latitude: (float) $attributes['latitude'],
             longitude: (float) $attributes['longitude'],
             speedKmh: isset($attributes['speed_kmh']) ? (float) $attributes['speed_kmh'] : null,
             recordedAt: CarbonImmutable::parse($attributes['recorded_at'])->utc(),
+            accuracyMeters: isset($attributes['accuracy_meters']) ? (float) $attributes['accuracy_meters'] : null,
+            isFinal: filter_var($attributes['final'] ?? false, FILTER_VALIDATE_BOOLEAN),
         );
     }
 
     /**
-     * Forma de fila para gps_locations (sin `location`: la deriva el modelo).
+     * Column values for a `gps_locations` row. `location` is intentionally
+     * absent: the model derives the PostGIS point from latitude/longitude.
      *
      * @return array<string, mixed>
      */
@@ -53,6 +61,7 @@ final readonly class GpsFix
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
             'speed_kmh' => $this->speedKmh,
+            'accuracy_meters' => $this->accuracyMeters,
             'recorded_at' => $this->recordedAt,
         ];
     }
