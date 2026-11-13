@@ -6,8 +6,8 @@ use App\Data\TripTrackingState;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreGpsLocationRequest;
 use App\Http\Resources\GpsLocationResource;
-use App\Models\Driver;
 use App\Models\Trip;
+use App\Services\EtaOrchestrationService;
 use App\Services\GpsLocationService;
 use App\Services\TripPositionStore;
 use App\Support\JsonApi\JsonApiErrors;
@@ -35,6 +35,7 @@ class GpsLocationController extends Controller
     public function __construct(
         private readonly GpsLocationService $service,
         private readonly TripPositionStore $positions,
+        private readonly EtaOrchestrationService $eta,
     ) {}
 
     /**
@@ -63,28 +64,20 @@ class GpsLocationController extends Controller
     #[ResponseDoc(202, 'Accepted but not stored', mediaType: JsonApiErrors::MEDIA_TYPE, type: "array{meta: array{persisted: false, outcome: 'broadcast_only'|'duplicate'|'stale'}}")]
     #[ResponseDoc(401, 'Missing or invalid token', mediaType: JsonApiErrors::MEDIA_TYPE, type: self::ERROR_DOC)]
     #[ResponseDoc(403, 'Not the driver assigned to the trip', mediaType: JsonApiErrors::MEDIA_TYPE, type: self::ERROR_DOC)]
+    #[ResponseDoc(404, 'The trip does not exist', mediaType: JsonApiErrors::MEDIA_TYPE, type: self::ERROR_DOC)]
     #[ResponseDoc(409, 'The trip is not in progress', mediaType: JsonApiErrors::MEDIA_TYPE, type: self::ERROR_DOC)]
     public function store(StoreGpsLocationRequest $request): HttpResponse
     {
         $fix = $request->toGpsFix();
-        $user = $request->user();
 
-        $trip = Trip::with('driver')->find($fix->tripId);
-        if (! $trip) {
-            abort(Response::HTTP_NOT_FOUND, 'The requested resource does not exist.');
+        $result = $this->service->record($fix, $request->user());
+
+        // The ETA watcher (separate process) calls the Dashboard and the ETA
+        // service on behalf of the driver: it needs a current token. Local
+        // cache only, no network: it never slows down or breaks this request.
+        if (! $result->wasIgnored()) {
+            $this->eta->rememberDriverToken($fix->tripId, $request->bearerToken());
         }
-
-        if ($trip->status !== Trip::STATUS_IN_PROGRESS) {
-            abort(Response::HTTP_CONFLICT, 'Trip is not currently in progress');
-        }
-
-        if (! ($trip->driver && $trip->driver->user_id === $user->id && $trip->driver->status === Driver::STATUS_ACTIVE)) {
-            abort(Response::HTTP_FORBIDDEN, 'The authenticated user is not the assigned driver for this trip');
-        }
-
-        $bearerToken = $request->bearerToken();
-
-        $result = $this->service->record($fix, $bearerToken);
 
         if ($result->location !== null) {
             return GpsLocationResource::make($result->location)

@@ -2,339 +2,468 @@
 
 namespace App\Services;
 
-use App\Data\GpsFix;
+use App\Data\TripPosition;
 use App\Events\TripArrivalsUpdated;
 use App\Models\Trip;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
+/**
+ * Arrival estimates (ETA) of the trips in progress, broadcast to passengers
+ * as `TripArrivalsUpdated` on `private-trip.{id}`.
+ *
+ * Runs in its own process (`php artisan gps:eta-watch`), NEVER inside the
+ * driver's GPS request: a slow or failing Dashboard / ETA service can only
+ * delay the estimates, never the bus position. With `ETA_SERVICE_URL` or
+ * `DASHBOARD_URL` unset the whole feature is off.
+ *
+ * Per trip and per new position:
+ *   1. ETA context of the trip, from the Dashboard (cached): route line, stop
+ *      distances and `route_revision`, exactly as the ETA service validates them.
+ *   2. Bus progress along that line, same projection as the Dashboard.
+ *   3. POST to the ETA service with the remaining stops.
+ *   4. Broadcast the arrivals.
+ *
+ * Both calls carry the driver's own token (the Dashboard and the ETA service
+ * authorize the active user): the GPS request leaves it in the cache,
+ * encrypted and short-lived ([rememberDriverToken]).
+ */
 class EtaOrchestrationService
 {
-    /**
-     * Orchestrates ETA calculation for a given trip fix by querying the ETA microservice.
-     *
-     * @return array<int, array<string, mixed>>|null
-     */
-    public function calculate(string $tripId, GpsFix $fix, ?string $bearerToken = null): ?array
-    {
-        $trip = Trip::query()->find($tripId);
-        if (! $trip) {
-            Log::warning("Cannot orchestrate ETA: Trip {$tripId} not found.");
+    private const EARTH_RADIUS_METERS = 6371000;
 
+    /** The app sends a reading every 5 s: an older token means the driver stopped sending. */
+    private const TOKEN_TTL_SECONDS = 600;
+
+    /** The trip plan is frozen once the trip starts. */
+    private const CONTEXT_TTL_SECONDS = 600;
+
+    /** After a failed context request (401, 422 without route line, outage…). */
+    private const CONTEXT_RETRY_SECONDS = 60;
+
+    /** Projections this close to the best one are ambiguous (route passing by twice). */
+    private const AMBIGUITY_METERS = 20.0;
+
+    private const UNAVAILABLE = 'unavailable';
+
+    public function __construct(private readonly TripPositionStore $positions) {}
+
+    public function isEnabled(): bool
+    {
+        return filled(config('services.eta.url')) && filled(config('services.dashboard.url'));
+    }
+
+    /**
+     * Called by the GPS request after an accepted reading. Local cache only;
+     * it never throws (the reading is already accepted).
+     */
+    public function rememberDriverToken(string $tripId, ?string $token): void
+    {
+        if (! $this->isEnabled() || blank($token)) {
+            return;
+        }
+
+        try {
+            Cache::put($this->key($tripId, 'token'), Crypt::encryptString($token), self::TOKEN_TTL_SECONDS);
+        } catch (Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * One pass over the trips in progress. A failing trip never stops the others.
+     *
+     * @return int Trips whose arrivals were broadcast.
+     */
+    public function refreshActiveTrips(): int
+    {
+        if (! $this->isEnabled()) {
+            return 0;
+        }
+
+        $updated = 0;
+        foreach (Trip::query()->where('status', Trip::STATUS_IN_PROGRESS)->pluck('id') as $tripId) {
+            try {
+                if ($this->refreshTrip((string) $tripId) !== null) {
+                    $updated++;
+                }
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Estimates and broadcasts the arrivals of one trip, when it has a new and
+     * recent position. `null` when there is nothing new or it could not be done.
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    public function refreshTrip(string $tripId): ?array
+    {
+        // Cache first: a trip nobody is driving right now costs no query.
+        $token = $this->driverToken($tripId);
+        if ($token === null) {
             return null;
         }
 
-        $snapshot = $trip->planned_route_snapshot ?? [];
+        $position = $this->positions->get($tripId);
+        if ($position === null) {
+            return null;
+        }
 
-        // Attempt to load authoritative context from Dashboard (or cache)
-        $context = $this->getTripContext($tripId, $bearerToken);
+        $age = $position->recordedAt->diffInSeconds(CarbonImmutable::now(), false);
+        if ($age > (int) config('services.eta.max_position_age', 30)) {
+            return null; // the ETA service would answer "stale_observation"
+        }
 
-        $routeRevision = $context['route_revision']
-            ?? $snapshot['revision_hash']
-            ?? $snapshot['route_revision']
-            ?? hash('sha256', json_encode($snapshot));
+        $observedAt = $this->iso($position->recordedAt);
+        if (Cache::get($this->key($tripId, 'last')) === $observedAt) {
+            return null; // already estimated for this position
+        }
+        Cache::put($this->key($tripId, 'last'), $observedAt, 3600);
 
-        $routeGeometry = $context['route_geometry'] ?? $snapshot['route_geometry'] ?? $snapshot['geometry'] ?? null;
-        $stops = $context['stop_occurrences'] ?? $snapshot['occurrences'] ?? $snapshot['stops'] ?? [];
+        $speed = $this->effectiveSpeed($tripId, $position);
 
-        $progressData = $this->computeProgressWithGeometry($routeGeometry ?? $snapshot, $fix);
-        $progressDistance = $progressData['distance_along_route_m'];
+        $context = $this->context($tripId, $token);
+        if ($context === null) {
+            return null;
+        }
+
+        $lastProgress = Cache::get($this->key($tripId, 'progress'));
+        $payload = $this->buildPayload(
+            $context,
+            $position,
+            $speed,
+            is_numeric($lastProgress) ? (float) $lastProgress : null,
+        );
+        if ($payload === null) {
+            return null;
+        }
+        Cache::put($this->key($tripId, 'progress'), $payload['tracking']['distance_along_route_m'], 3600);
+
+        return $this->requestArrivals($tripId, $token, $payload);
+    }
+
+    /**
+     * Request body of `POST {ETA}/trips/{id}/arrivals` (contract v1).
+     *
+     * Distances come from the Dashboard's context, so every
+     * `remaining_distance_m` is exactly `stop distance - progress`, as the ETA
+     * service checks. `null` when the context cannot be used.
+     *
+     * @param  array<string, mixed>  $context
+     * @param  array{kmh: float, at: string}|null  $effectiveSpeed
+     * @return array<string, mixed>|null
+     */
+    public function buildPayload(array $context, TripPosition $position, ?array $effectiveSpeed = null, ?float $lastProgress = null): ?array
+    {
+        $coordinates = $this->coordinates($context['route_geometry']['coordinates'] ?? null);
+        $routeDistance = $context['route_distance_m'] ?? null;
+        $stops = $context['stop_occurrences'] ?? null;
+        if ($coordinates === null || ! is_numeric($routeDistance) || ! is_array($stops)) {
+            return null;
+        }
+
+        [$progress, $offRouteMeters] = $this->project($coordinates, $position, $lastProgress);
+        $progress = round(min(max($progress, 0.0), (float) $routeDistance), 3);
 
         $targets = [];
         foreach ($stops as $stop) {
-            $stopOccurrenceId = $stop['occurrence_id'] ?? $stop['stop_occurrence_id'] ?? null;
-            if (! $stopOccurrenceId) {
+            $distance = $stop['distance_along_route_m'] ?? null;
+            $occurrenceId = $stop['occurrence_id'] ?? null;
+            if (! is_string($occurrenceId) || ! is_numeric($distance)) {
+                return null;
+            }
+            // Stops behind the bus are not sent (the ETA service rejects them).
+            if ((float) $distance < $progress) {
                 continue;
             }
-
-            $stopDistance = isset($stop['distance_along_route_m'])
-                ? (float) $stop['distance_along_route_m']
-                : null;
-
-            if ($stopDistance === null) {
-                $stopLat = (float) ($stop['lat'] ?? $stop['latitude'] ?? 0);
-                $stopLng = (float) ($stop['lng'] ?? $stop['longitude'] ?? 0);
-                $stopDistance = $this->distanceAlongLineString($routeGeometry['coordinates'] ?? [], $stopLat, $stopLng)['distance'];
-            }
-
-            $remaining = round(max(0.0, $stopDistance - $progressDistance), 3);
-
-            // ETA validator forbids passed stops (remaining < 0)
-            if ($stopDistance >= ($progressDistance - 0.001)) {
-                $targets[] = [
-                    'stop_occurrence_id' => $stopOccurrenceId,
-                    'remaining_distance_m' => $remaining,
-                ];
-            }
+            $targets[] = [
+                'stop_occurrence_id' => $occurrenceId,
+                'remaining_distance_m' => round((float) $distance - $progress, 3),
+            ];
         }
-
-        // If all stops are passed (bus reached final stop), provide last stop with 0 remaining
-        if (empty($targets) && ! empty($stops)) {
-            $lastStop = end($stops);
-            $lastId = $lastStop['occurrence_id'] ?? $lastStop['stop_occurrence_id'] ?? null;
-            if ($lastId) {
-                $targets[] = [
-                    'stop_occurrence_id' => $lastId,
-                    'remaining_distance_m' => 0.0,
-                ];
-            }
-        }
-
-        if (empty($targets)) {
-            Log::warning("Cannot orchestrate ETA: Trip {$tripId} has no arrival targets.");
-
+        if ($targets === []) {
             return null;
         }
 
-        $observedAt = $fix->recordedAt->toIso8601String();
-        $currentSpeed = $fix->speedKmh !== null ? (float) $fix->speedKmh : 0.0;
-        $accuracy = $fix->accuracyMeters !== null ? (float) $fix->accuracyMeters : null;
+        $currentSpeed = $position->speedKmh !== null ? min(max($position->speedKmh, 0.0), 400.0) : null;
+        $accuracy = $position->accuracyMeters !== null ? max($position->accuracyMeters, 0.0) : null;
 
-        $payload = [
+        return [
             'contract_version' => 1,
-            'route_revision' => $routeRevision,
-            'position_version' => 1,
-            'observed_at' => $observedAt,
+            'route_revision' => (string) $context['route_revision'],
+            // Readings only move forward (stale ones are rejected), so the
+            // reading time is a valid increasing version.
+            'position_version' => max(1, (int) $position->recordedAt->getTimestampMs()),
+            'observed_at' => $this->iso($position->recordedAt),
             'tracking' => [
-                'on_route' => (bool) $progressData['on_route'],
+                'on_route' => $offRouteMeters <= (float) config('services.eta.on_route_meters', 100),
                 'accuracy_meters' => $accuracy,
                 'current_speed_kmh' => $currentSpeed,
-                'effective_speed_kmh' => $currentSpeed,
-                'effective_speed_observed_at' => $observedAt,
-                'distance_along_route_m' => (float) $progressDistance,
+                'effective_speed_kmh' => $effectiveSpeed['kmh'] ?? null,
+                'effective_speed_observed_at' => $effectiveSpeed['at'] ?? null,
+                'distance_along_route_m' => $progress,
                 'confirmed_stop_occurrence_id' => null,
             ],
-            'targets' => $targets,
+            'targets' => array_slice($targets, 0, 100),
         ];
-
-        $baseUrl = rtrim(config('services.eta.url', 'http://eta-service:8000/api/v1/eta'), '/');
-        $url = "{$baseUrl}/trips/{$tripId}/arrivals";
-        $timeout = (int) config('services.eta.timeout', 15);
-
-        try {
-            $httpClient = Http::timeout($timeout);
-            if ($bearerToken) {
-                $httpClient = $httpClient->withToken($bearerToken);
-            }
-
-            $response = $httpClient->post($url, $payload);
-
-            if ($response->successful()) {
-                $rawArrivals = $response->json('data.attributes.arrivals', []);
-
-                $arrivals = array_map(function (array $arrival) {
-                    return [
-                        'stop_occurrence_id' => $arrival['stop_occurrence_id'] ?? $arrival['occurrence_id'] ?? null,
-                        'occurrence_id' => $arrival['stop_occurrence_id'] ?? $arrival['occurrence_id'] ?? null,
-                        'stop_id' => $arrival['stop_id'] ?? null,
-                        'stop_sequence' => $arrival['stop_sequence'] ?? null,
-                        'remaining_distance_m' => $arrival['remaining_distance_m'] ?? null,
-                        'eta_seconds' => $arrival['eta_seconds'] ?? null,
-                        'arrival_at' => $arrival['arrival_at'] ?? null,
-                        'method' => $arrival['method'] ?? null,
-                        'quality_reason' => $arrival['quality_reason'] ?? null,
-                    ];
-                }, $rawArrivals);
-
-                $calculatedAt = now()->toIso8601String();
-                TripArrivalsUpdated::dispatch($tripId, $arrivals, $calculatedAt);
-
-                return $arrivals;
-            }
-
-            Log::warning("ETA microservice returned HTTP {$response->status()} for trip {$tripId}: {$response->body()}");
-
-            return null;
-        } catch (Throwable $e) {
-            Log::warning("ETA orchestration failed for trip {$tripId}: {$e->getMessage()}");
-
-            return null;
-        }
     }
 
     /**
-     * Retrieves authoritative trip context from the Dashboard or local cache.
+     * ETA context of the trip from the Dashboard (`projection=eta-v1`), cached.
+     * A failure is also remembered for a minute, so an outage is not hit every 5 s.
      *
      * @return array<string, mixed>|null
      */
-    public function getTripContext(string $tripId, ?string $bearerToken = null): ?array
+    private function context(string $tripId, string $token): ?array
     {
-        return Cache::remember("trip_tracking_context_{$tripId}", 300, function () use ($tripId, $bearerToken) {
-            $dashboardUrl = rtrim(config('services.dashboard.url', 'http://dashboard:80'), '/');
-            $timeout = (int) config('services.dashboard.timeout', 15);
+        $key = $this->key($tripId, 'context');
+        $cached = Cache::get($key);
+        if (is_array($cached)) {
+            return $cached;
+        }
+        if ($cached === self::UNAVAILABLE) {
+            return null;
+        }
 
-            try {
-                $client = Http::timeout($timeout);
-                if ($bearerToken) {
-                    $client = $client->withToken($bearerToken);
-                }
+        $url = rtrim((string) config('services.dashboard.url'), '/')."/api/internal/v1/trips/{$tripId}/tracking-context";
 
-                $response = $client->get("{$dashboardUrl}/api/internal/v1/trips/{$tripId}/tracking-context", [
-                    'projection' => 'eta-v1',
-                ]);
+        try {
+            $response = Http::timeout((float) config('services.dashboard.timeout', 8))
+                ->connectTimeout(3)
+                ->acceptJson()
+                ->withToken($token)
+                ->get($url, ['projection' => 'eta-v1']);
 
-                if ($response->successful()) {
-                    return $response->json();
-                }
-            } catch (Throwable $e) {
-                Log::warning("Could not fetch tracking context from dashboard for trip {$tripId}: {$e->getMessage()}");
+            $context = $response->successful() ? $response->json() : null;
+            if (is_array($context) && $this->isUsableContext($context)) {
+                Cache::put($key, $context, self::CONTEXT_TTL_SECONDS);
+
+                return $context;
             }
+
+            Log::warning("ETA: no usable tracking context for trip {$tripId} (HTTP {$response->status()}).");
+        } catch (Throwable $e) {
+            Log::warning("ETA: tracking context request failed for trip {$tripId}: {$e->getMessage()}");
+        }
+
+        Cache::put($key, self::UNAVAILABLE, self::CONTEXT_RETRY_SECONDS);
+
+        return null;
+    }
+
+    /** @param  array<string, mixed>  $context */
+    private function isUsableContext(array $context): bool
+    {
+        return is_string($context['route_revision'] ?? null)
+            && preg_match('/\A[0-9a-f]{64}\z/', $context['route_revision']) === 1
+            && is_numeric($context['route_distance_m'] ?? null)
+            && is_array($context['stop_occurrences'] ?? null)
+            && $this->coordinates($context['route_geometry']['coordinates'] ?? null) !== null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return list<array<string, mixed>>|null
+     */
+    private function requestArrivals(string $tripId, string $token, array $payload): ?array
+    {
+        $url = rtrim((string) config('services.eta.url'), '/')."/trips/{$tripId}/arrivals";
+
+        try {
+            $response = Http::timeout((float) config('services.eta.timeout', 8))
+                ->connectTimeout(3)
+                ->acceptJson()
+                ->withToken($token)
+                ->post($url, $payload);
+        } catch (Throwable $e) {
+            Log::warning("ETA: request failed for trip {$tripId}: {$e->getMessage()}");
 
             return null;
-        });
-    }
-
-    /**
-     * Computes route progress metrics from the planned route snapshot and the GPS fix.
-     *
-     * @param  array<string, mixed>  $snapshot
-     * @return array{
-     *     distance_along_route_m: float,
-     *     current_speed_kmh: float,
-     *     accuracy_meters: float|null,
-     *     on_route: bool
-     * }
-     */
-    public function computeProgress(array $snapshot, GpsFix $fix): array
-    {
-        return $this->computeProgressWithGeometry($snapshot, $fix);
-    }
-
-    /**
-     * Computes route progress from geometry coordinates or snapshot.
-     *
-     * @param  array<string, mixed>|null  $geometry
-     * @return array{
-     *     distance_along_route_m: float,
-     *     current_speed_kmh: float,
-     *     accuracy_meters: float|null,
-     *     on_route: bool
-     * }
-     */
-    public function computeProgressWithGeometry(?array $geometry, GpsFix $fix): array
-    {
-        $currentSpeed = $fix->speedKmh !== null ? (float) $fix->speedKmh : 0.0;
-        $accuracy = $fix->accuracyMeters !== null ? (float) $fix->accuracyMeters : null;
-
-        $distanceAndOnRoute = $this->calculateDistanceAlongRoute($geometry ?? [], $fix->latitude, $fix->longitude);
-
-        return [
-            'distance_along_route_m' => $distanceAndOnRoute['distance'],
-            'current_speed_kmh' => $currentSpeed,
-            'accuracy_meters' => $accuracy,
-            'on_route' => $distanceAndOnRoute['on_route'],
-        ];
-    }
-
-    /**
-     * Calculates distance along route in meters and whether the position is within 200m of the route.
-     *
-     * @param  array<string, mixed>  $snapshot
-     * @return array{distance: float, on_route: bool}
-     */
-    private function calculateDistanceAlongRoute(array $snapshot, float $latitude, float $longitude): array
-    {
-        $coordinates = $snapshot['coordinates']
-            ?? $snapshot['geometry']['coordinates']
-            ?? $snapshot['route_geometry']['coordinates']
-            ?? null;
-
-        // Check for GeoJSON LineString coordinates [[lon, lat], ...]
-        if (is_array($coordinates) && count($coordinates) >= 2) {
-            return $this->distanceAlongLineString($coordinates, $latitude, $longitude);
         }
 
-        // Check for stop occurrences / stops list
-        $stops = $snapshot['stops'] ?? $snapshot['stop_occurrences'] ?? $snapshot['occurrences'] ?? null;
-        if (is_array($stops) && count($stops) >= 2) {
-            $coords = [];
-            foreach ($stops as $stop) {
-                if (isset($stop['latitude'], $stop['longitude'])) {
-                    $coords[] = [(float) $stop['longitude'], (float) $stop['latitude']];
-                } elseif (isset($stop['lat'], $stop['lng'])) {
-                    $coords[] = [(float) $stop['lng'], (float) $stop['lat']];
-                } elseif (isset($stop['coordinates']) && is_array($stop['coordinates'])) {
-                    $coords[] = $stop['coordinates'];
-                }
+        if (! $response->successful()) {
+            if ($response->status() === 409) {
+                // route_revision_mismatch (plan changed) or trip ended: read the context again.
+                Cache::forget($this->key($tripId, 'context'));
             }
-            if (count($coords) >= 2) {
-                return $this->distanceAlongLineString($coords, $latitude, $longitude);
-            }
+            Log::warning("ETA: service answered HTTP {$response->status()} for trip {$tripId}: {$response->body()}");
+
+            return null;
         }
 
-        return [
-            'distance' => 0.0,
-            'on_route' => true,
-        ];
+        $raw = $response->json('data.attributes.arrivals');
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        $arrivals = [];
+        foreach ($raw as $arrival) {
+            if (! is_array($arrival)) {
+                continue;
+            }
+            $arrivals[] = [
+                'stop_occurrence_id' => $arrival['stop_occurrence_id'] ?? null,
+                'occurrence_id' => $arrival['stop_occurrence_id'] ?? null,
+                'stop_id' => $arrival['stop_id'] ?? null,
+                'stop_sequence' => $arrival['stop_sequence'] ?? null,
+                'remaining_distance_m' => $arrival['remaining_distance_m'] ?? null,
+                'eta_seconds' => $arrival['eta_seconds'] ?? null,
+                'arrival_at' => $arrival['arrival_at'] ?? null,
+                'planned_arrival_at' => $arrival['planned_arrival_at'] ?? null,
+                'method' => $arrival['method'] ?? null,
+                'quality_reason' => $arrival['quality_reason'] ?? null,
+            ];
+        }
+
+        try {
+            TripArrivalsUpdated::dispatch($tripId, $arrivals, now()->toIso8601String());
+        } catch (Throwable $e) {
+            report($e); // Reverb down: the next position tries again
+        }
+
+        return $arrivals;
     }
 
     /**
-     * @param  list<list<float>>  $coordinates  Array of [lon, lat] pairs.
-     * @return array{distance: float, on_route: bool}
+     * Last moving speed, so a bus stopped at a light still gets live estimates
+     * (the ETA service only uses it while it is recent).
+     *
+     * @return array{kmh: float, at: string}|null
      */
-    private function distanceAlongLineString(array $coordinates, float $lat, float $lon): array
+    private function effectiveSpeed(string $tripId, TripPosition $position): ?array
     {
-        $closestDistanceToSegment = INF;
-        $distanceAtClosestSegment = 0.0;
-        $cumulativeDistance = 0.0;
+        $key = $this->key($tripId, 'speed');
+        if ($position->speedKmh !== null && $position->speedKmh > 0) {
+            $speed = ['kmh' => min($position->speedKmh, 400.0), 'at' => $this->iso($position->recordedAt)];
+            Cache::put($key, $speed, 3600);
 
-        $pointCount = count($coordinates);
-        for ($i = 0; $i < $pointCount - 1; $i++) {
-            $lon1 = (float) $coordinates[$i][0];
-            $lat1 = (float) $coordinates[$i][1];
-            $lon2 = (float) $coordinates[$i + 1][0];
-            $lat2 = (float) $coordinates[$i + 1][1];
-
-            $segmentLength = $this->haversineMeters($lat1, $lon1, $lat2, $lon2);
-
-            // Distance from point to start of segment
-            $distToStart = $this->haversineMeters($lat, $lon, $lat1, $lon1);
-            $distToEnd = $this->haversineMeters($lat, $lon, $lat2, $lon2);
-
-            // Project point onto segment approximation
-            if ($segmentLength > 0) {
-                $t = (($lat - $lat1) * ($lat2 - $lat1) + ($lon - $lon1) * ($lon2 - $lon1))
-                    / (($lat2 - $lat1) ** 2 + ($lon2 - $lon1) ** 2);
-                $tClamped = max(0.0, min(1.0, $t));
-                $projLat = $lat1 + $tClamped * ($lat2 - $lat1);
-                $projLon = $lon1 + $tClamped * ($lon2 - $lon1);
-                $minDist = $this->haversineMeters($lat, $lon, $projLat, $projLon);
-                $segmentProgress = $cumulativeDistance + ($tClamped * $segmentLength);
-            } else {
-                $minDist = min($distToStart, $distToEnd);
-                $segmentProgress = $cumulativeDistance;
-            }
-
-            if ($minDist < $closestDistanceToSegment) {
-                $closestDistanceToSegment = $minDist;
-                $distanceAtClosestSegment = $segmentProgress;
-            }
-
-            $cumulativeDistance += $segmentLength;
+            return $speed;
         }
 
-        $onRoute = $closestDistanceToSegment <= 200.0;
+        $cached = Cache::get($key);
 
-        return [
-            'distance' => round($distanceAtClosestSegment, 2),
-            'on_route' => $onRoute,
-        ];
+        return is_array($cached) && is_numeric($cached['kmh'] ?? null) && is_string($cached['at'] ?? null)
+            ? ['kmh' => (float) $cached['kmh'], 'at' => $cached['at']]
+            : null;
     }
 
-    private function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): float
+    private function driverToken(string $tripId): ?string
     {
-        $earthRadius = 6371000.0; // meters
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLon = deg2rad($lon2 - $lon1);
+        $encrypted = Cache::get($this->key($tripId, 'token'));
+        if (! is_string($encrypted)) {
+            return null;
+        }
 
-        $a = sin($dLat / 2) * sin($dLat / 2) +
-            cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
-            sin($dLon / 2) * sin($dLon / 2);
+        try {
+            return Crypt::decryptString($encrypted);
+        } catch (Throwable) {
+            return null;
+        }
+    }
 
-        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+    /**
+     * Distance along the line of the point closest to the bus, and how far
+     * the bus is from the line. Same projection as the Dashboard's ETA
+     * context, so both measure the route the same way. When the line passes
+     * by twice, the candidate closest to the previous progress wins.
+     *
+     * @param  list<array{float, float}>  $coordinates  [lng, lat]
+     * @return array{float, float}
+     */
+    private function project(array $coordinates, TripPosition $position, ?float $lastProgress): array
+    {
+        $point = [$position->longitude, $position->latitude];
+        $candidates = [];
+        $offset = 0.0;
+        for ($i = 1; $i < count($coordinates); $i++) {
+            [$start, $end] = [$coordinates[$i - 1], $coordinates[$i]];
+            $length = $this->distance($start, $end);
+            if ($length <= 0) {
+                continue;
+            }
 
-        return $earthRadius * $c;
+            $longitudeDelta = $this->longitudeDelta($end[0] - $start[0]);
+            $latitudeDelta = $end[1] - $start[1];
+            $scale = cos(deg2rad(($start[1] + $end[1]) / 2));
+            $x = $longitudeDelta * $scale;
+            $y = $latitudeDelta;
+            $pointX = $this->longitudeDelta($point[0] - $start[0]) * $scale;
+            $pointY = $point[1] - $start[1];
+            $fraction = max(0.0, min(1.0, ($x * $pointX + $y * $pointY) / ($x * $x + $y * $y)));
+            $snapped = [$start[0] + $fraction * $longitudeDelta, $start[1] + $fraction * $latitudeDelta];
+
+            $candidates[] = [$this->distance($point, $snapped), $offset + $fraction * $length];
+            $offset += $length;
+        }
+
+        if ($candidates === []) {
+            return [0.0, INF];
+        }
+
+        $best = min(array_column($candidates, 0));
+        $near = array_values(array_filter($candidates, fn (array $c): bool => $c[0] <= $best + self::AMBIGUITY_METERS));
+        usort($near, fn (array $a, array $b): int => $lastProgress === null
+            ? $a[1] <=> $b[1]
+            : abs($a[1] - $lastProgress) <=> abs($b[1] - $lastProgress));
+
+        return [$near[0][1], $best];
+    }
+
+    /**
+     * @return list<array{float, float}>|null
+     */
+    private function coordinates(mixed $coordinates): ?array
+    {
+        if (! is_array($coordinates) || count($coordinates) < 2) {
+            return null;
+        }
+
+        $points = [];
+        foreach ($coordinates as $point) {
+            if (! is_array($point) || ! is_numeric($point[0] ?? null) || ! is_numeric($point[1] ?? null)) {
+                return null;
+            }
+            $points[] = [(float) $point[0], (float) $point[1]];
+        }
+
+        return $points;
+    }
+
+    /**
+     * @param  array{float, float}  $start
+     * @param  array{float, float}  $end
+     */
+    private function distance(array $start, array $end): float
+    {
+        $latitudeDelta = deg2rad($end[1] - $start[1]);
+        $longitudeDelta = deg2rad($this->longitudeDelta($end[0] - $start[0]));
+        $haversine = sin($latitudeDelta / 2) ** 2
+            + cos(deg2rad($start[1])) * cos(deg2rad($end[1])) * sin($longitudeDelta / 2) ** 2;
+
+        return 2 * self::EARTH_RADIUS_METERS * asin(sqrt(min(1.0, $haversine)));
+    }
+
+    private function longitudeDelta(float $degrees): float
+    {
+        return fmod($degrees + 540, 360) - 180;
+    }
+
+    private function iso(CarbonImmutable $instant): string
+    {
+        return $instant->utc()->format('Y-m-d\TH:i:s.v\Z');
+    }
+
+    private function key(string $tripId, string $name): string
+    {
+        return "gps:trip:{$tripId}:eta:{$name}";
     }
 }

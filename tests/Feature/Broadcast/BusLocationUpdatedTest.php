@@ -61,15 +61,6 @@ beforeEach(function () {
                 default => Http::response(['errors' => [['status' => '401']]], 401),
             };
         },
-        '*/arrivals' => Http::response([
-            'data' => [
-                'type' => 'trip-arrival-estimates',
-                'id' => 'trip-id',
-                'attributes' => [
-                    'arrivals' => [],
-                ],
-            ],
-        ], 200),
     ]);
 });
 

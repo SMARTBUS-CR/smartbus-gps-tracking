@@ -87,3 +87,61 @@ requisito de la ingesta. Verificado: con Reverb apagado, el POST sigue dando `20
 - `implements ShouldBroadcast` = sí.
 - POST real (con Reverb corriendo) → `201`, sin errores en el flujo de broadcast.
 - Fila de prueba borrada; BD de operaciones intacta (ids 1,2,3).
+
+---
+
+## TripArrivalsUpdated
+
+### Qué es
+Las llegadas estimadas (ETA) del bus a las paradas que le faltan. Mismo canal
+`private-trip.{tripId}`; el cliente escucha `.TripArrivalsUpdated`.
+
+### Dónde se calcula: fuera del POST del conductor
+`php artisan gps:eta-watch` (programa `laravel-eta` de supervisord) recorre cada
+~5 s (`ETA_REFRESH_SECONDS`) los viajes `in_progress` que tienen una posición
+**nueva y reciente** (≤ 30 s), y para cada uno
+(`App\Services\EtaOrchestrationService`):
+
+1. Pide al Dashboard el contexto ETA del viaje
+   (`GET /api/internal/v1/trips/{id}/tracking-context?projection=eta-v1`, en caché
+   10 min): línea, distancia de cada parada y `route_revision`.
+2. Calcula el avance del bus sobre esa línea con la **misma proyección que el
+   Dashboard**, así cada `remaining_distance_m` es exactamente
+   `distancia de la parada − avance`, como valida el servicio ETA.
+3. `POST {ETA_SERVICE_URL}/trips/{id}/arrivals` (contrato v1) con las paradas
+   que faltan.
+4. Emite `TripArrivalsUpdated`.
+
+El `POST /api/gps/locations` **no llama a nadie**: solo deja el token del
+conductor en la caché (cifrado, 10 min), porque el Dashboard y el ETA autorizan
+al usuario activo. Si el Dashboard o el ETA están lentos o caídos, solo se
+atrasan o faltan los ETA; la posición del bus sigue igual.
+
+Sin `ETA_SERVICE_URL` o `DASHBOARD_URL` todo esto está apagado.
+
+### Payload
+```json
+{
+  "trip_id": "01a0…",
+  "arrivals": [
+    {
+      "stop_occurrence_id": "01a0…", "occurrence_id": "01a0…",
+      "stop_id": "01a0…", "stop_sequence": 2,
+      "remaining_distance_m": 222.4,
+      "eta_seconds": 23, "arrival_at": "2026-11-13T18:00:23Z",
+      "planned_arrival_at": "2026-11-13T18:01:00Z",
+      "method": "distance_speed", "quality_reason": "current_speed"
+    }
+  ],
+  "calculated_at": "2026-11-13T18:00:00+00:00"
+}
+```
+`method`: `distance_speed` (en vivo), `arrived`, `scheduled_reference` (solo
+itinerario: `eta_seconds` y `arrival_at` nulos, usar `planned_arrival_at`) o
+`unavailable`.
+
+### Cuándo no hay ETA
+- El recorrido no tiene línea por calles ("Calculate Route" en el Dashboard): el
+  Dashboard responde 422 y se vuelve a intentar al minuto.
+- La posición tiene más de 30 s (señal perdida).
+- `409` del ETA (cambió el plan o el viaje terminó): se vuelve a pedir el contexto.

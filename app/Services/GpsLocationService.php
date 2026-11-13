@@ -6,7 +6,6 @@ use App\Data\GpsFix;
 use App\Data\RecordResult;
 use App\Data\TripPosition;
 use App\Events\BusLocationUpdated;
-use App\Jobs\CalculateTripArrivalsJob;
 use App\Models\GpsLocation;
 use App\Models\Trip;
 use App\Support\Gateway\GatewayUser;
@@ -20,19 +19,24 @@ use Throwable;
  * accepted, stored and broadcast. Controllers never touch the models directly.
  *
  * Every check happens BEFORE anything is stored or broadcast:
- *   1. the sender is the driver assigned to the trip      (403 otherwise)
- *   2. the trip is in progress                            (409 otherwise)
- *   3. the reading is newer than the current position     (ignored otherwise)
+ *   1. the trip exists                                    (404 otherwise)
+ *   2. the sender is the driver assigned to the trip      (403 otherwise)
+ *   3. the trip is in progress                            (409 otherwise)
+ *   4. the reading is newer than the current position     (ignored otherwise)
  *
  * Transmit != persist: every accepted reading is broadcast at once (the
  * passenger's map), but `gps_locations` only keeps the START (first reading
  * of the trip) and the END (reading sent with `final: true`) of each trip.
+ *
+ * Arrival estimates (ETA) are NOT calculated here: the driver's request never
+ * waits for them. `php artisan gps:eta-watch` reads the current positions and
+ * does it in its own process (see App\Services\EtaOrchestrationService).
  */
 class GpsLocationService
 {
     public function __construct(
+        private readonly TripDriverGuard $guard,
         private readonly TripPositionStore $positions,
-        private readonly ?TripDriverGuard $guard = null,
     ) {}
 
     /**
@@ -41,25 +45,21 @@ class GpsLocationService
      * Readings of the same trip are processed one at a time (cache lock), so
      * two requests arriving together can never move the bus back.
      */
-    public function record(GpsFix $fix, mixed $driverOrToken = null, ?string $bearerToken = null): RecordResult
+    public function record(GpsFix $fix, GatewayUser $driver): RecordResult
     {
-        $token = is_string($driverOrToken) ? $driverOrToken : $bearerToken;
-
         $trip = Trip::query()->findOrFail($fix->tripId);
 
-        if ($driverOrToken instanceof GatewayUser && $this->guard !== null) {
-            $this->guard->authorize($trip, $driverOrToken);
-        }
+        $this->guard->authorize($trip, $driver);
 
         if (! $trip->isInProgress()) {
-            throw new ConflictHttpException("The trip is not in progress: it is {$trip->status}.");
+            throw new ConflictHttpException('Trip is not currently in progress');
         }
 
         return Cache::lock("gps:trip:{$trip->id}:record", 10)
-            ->block(5, fn () => $this->recordInOrder($fix, $trip, $token));
+            ->block(5, fn () => $this->recordInOrder($fix, $trip));
     }
 
-    private function recordInOrder(GpsFix $fix, Trip $trip, ?string $bearerToken = null): RecordResult
+    private function recordInOrder(GpsFix $fix, Trip $trip): RecordResult
     {
         // A reading taken before the current position arrived late (e.g. after
         // a disconnection): it must not replace a newer one.
@@ -94,8 +94,6 @@ class GpsLocationService
         $broadcastable = $location
             ?? (new GpsLocation($fix->toDatabaseRow()))->setRelation('trip', $trip);
         $this->broadcast($broadcastable);
-
-        CalculateTripArrivalsJob::dispatch($fix->tripId, $fix, $bearerToken);
 
         return $location ? RecordResult::persisted($location) : RecordResult::broadcastOnly();
     }

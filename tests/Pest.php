@@ -75,8 +75,6 @@ function authServiceUser(string $id, string $role = 'passenger'): array
     ];
 }
 
-$GLOBALS['custom_eta_response'] = null;
-
 /**
  * Fakes the API Gateway: it recognizes only [$token] (as [$userId] with [$role])
  * and rejects any other token with 401, like its `validate.token` middleware.
@@ -87,29 +85,10 @@ function actingAsGatewayUser(
     string $userId = TEST_USER_ID,
     string $role = 'driver',
 ): void {
-    $GLOBALS['custom_eta_response'] = null;
-
     Http::fake([
         GATEWAY_USER_URL.'*' => fn (ClientRequest $request) => $request->hasHeader('Authorization', "Bearer {$token}")
             ? Http::response(authServiceUser($userId, $role))
             : Http::response(['message' => 'Invalid or expired token.'], 401),
-        '*/arrivals' => function (ClientRequest $request) {
-            if (! empty($GLOBALS['custom_eta_response'])) {
-                return is_callable($GLOBALS['custom_eta_response'])
-                    ? ($GLOBALS['custom_eta_response'])($request)
-                    : $GLOBALS['custom_eta_response'];
-            }
-
-            return Http::response([
-                'data' => [
-                    'type' => 'trip-arrival-estimates',
-                    'id' => 'trip-id',
-                    'attributes' => [
-                        'arrivals' => [],
-                    ],
-                ],
-            ], 200);
-        },
     ]);
 
     test()->withToken($token);

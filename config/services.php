@@ -35,14 +35,32 @@ return [
         ],
     ],
 
+    /*
+    | Arrival estimates (ETA), calculated by `php artisan gps:eta-watch` in its
+    | own process (never inside the driver's GPS request). OFF while
+    | ETA_SERVICE_URL or DASHBOARD_URL is empty. Both services receive the
+    | driver's own token. See docs/EVENTS.md (TripArrivalsUpdated).
+    */
     'eta' => [
-        'url' => env('ETA_SERVICE_URL', 'http://eta-service:8000/api/v1/eta'),
-        'timeout' => (int) env('ETA_TIMEOUT_SECONDS', 15),
+        // e.g. https://smartbus-eta.onrender.com/api/v1/eta
+        'url' => env('ETA_SERVICE_URL'),
+        'timeout' => (float) env('ETA_TIMEOUT_SECONDS', 8),
+        // Seconds between passes over the trips in progress.
+        'interval' => (float) env('ETA_REFRESH_SECONDS', 5),
+        // Older positions are skipped (the ETA service calls them stale after 30 s).
+        'max_position_age' => (int) env('ETA_MAX_POSITION_AGE_SECONDS', 30),
+        // Farther than this from the route line = off route.
+        'on_route_meters' => (float) env('ETA_ON_ROUTE_METERS', 100),
     ],
 
+    /*
+    | Dashboard (operations): ETA context of a trip
+    | (GET /api/internal/v1/trips/{id}/tracking-context?projection=eta-v1).
+    */
     'dashboard' => [
-        'url' => env('DASHBOARD_URL', 'http://dashboard:80'),
-        'timeout' => (int) env('DASHBOARD_TIMEOUT', 15),
+        // e.g. https://smartbus-dashboard-dev.onrender.com
+        'url' => env('DASHBOARD_URL'),
+        'timeout' => (float) env('DASHBOARD_TIMEOUT', 8),
     ],
 
     /*
