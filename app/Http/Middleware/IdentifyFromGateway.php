@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\Gateway\GatewayUnavailableException;
 use App\Support\Gateway\GatewayUser;
 use Closure;
 use Illuminate\Http\Request;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 use Throwable;
 
 /**
@@ -49,20 +51,52 @@ class IdentifyFromGateway
         return $next($request);
     }
 
+    /**
+     * The token's user, or null when the API Gateway REJECTS the token.
+     *
+     * When the Gateway cannot answer (slow, down, 5xx / 429), that is not a
+     * rejection: the last identity confirmed for this token is used, so a
+     * driver in the middle of a trip is not signed out because the Gateway had
+     * a slow moment. Without one, the request fails with a 503 (retryable),
+     * never with a 401 (which the app reads as "session expired").
+     *
+     * @throws ServiceUnavailableHttpException
+     */
     private function resolveUser(string $token): ?GatewayUser
     {
-        $cacheKey = 'gateway_user:'.hash('sha256', $token);
+        $hash = hash('sha256', $token);
+        $cacheKey = 'gateway_user:'.$hash;
+        $lastKnownKey = 'gateway_user_last:'.$hash;
 
         $identity = Cache::get($cacheKey);
 
         if ($identity === null) {
-            $identity = $this->fetchIdentity($token);
+            try {
+                $identity = $this->fetchIdentity($token);
+            } catch (GatewayUnavailableException $e) {
+                $identity = Cache::get($lastKnownKey);
+
+                if ($identity === null) {
+                    throw new ServiceUnavailableHttpException(
+                        null,
+                        'Authentication could not be confirmed. Try again.',
+                        $e,
+                    );
+                }
+
+                return new GatewayUser($identity['id'], $identity['roles']);
+            }
 
             if ($identity === null) {
+                // Rejected for good: forget it, so the fallback above can
+                // never let a revoked token in.
+                Cache::forget($lastKnownKey);
+
                 return null;
             }
 
             Cache::put($cacheKey, $identity, config('gateway.identity.cache_ttl'));
+            Cache::put($lastKnownKey, $identity, config('gateway.identity.last_known_ttl'));
         }
 
         return new GatewayUser($identity['id'], $identity['roles']);
@@ -71,7 +105,9 @@ class IdentifyFromGateway
     /**
      * Ask the API Gateway who owns the token.
      *
-     * @return array{id: string, roles: list<string>}|null
+     * @return array{id: string, roles: list<string>}|null null = the token is rejected
+     *
+     * @throws GatewayUnavailableException The Gateway could not answer.
      */
     private function fetchIdentity(string $token): ?array
     {
@@ -89,7 +125,15 @@ class IdentifyFromGateway
                 'error' => $e->getMessage(),
             ]);
 
-            return null;
+            throw new GatewayUnavailableException($e->getMessage(), previous: $e);
+        }
+
+        if ($response->serverError() || $response->status() === 429) {
+            Log::warning('API Gateway could not resolve the user.', [
+                'status' => $response->status(),
+            ]);
+
+            throw new GatewayUnavailableException("Gateway answered {$response->status()}.");
         }
 
         if (! $response->successful()) {
