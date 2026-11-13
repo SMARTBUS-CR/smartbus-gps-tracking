@@ -69,12 +69,20 @@ Flutter ──Authorization: Bearer <token>──▶ Gateway ──valida con Au
   - Se **cachea** por token (`GATEWAY_IDENTITY_CACHE_TTL`, 300 s por defecto). Los errores
     no se cachean. Un conductor que envía GPS cada 5 s genera ~12 consultas por hora.
   - Cualquier `X-User-*` que venga del cliente se **ignora**: la identidad no se puede falsificar.
+  - **Rechazado ≠ no disponible.** Solo si el Gateway **rechaza** el token (401/403…)
+    no hay usuario y la ruta responde `401`. Si el Gateway **no puede responder**
+    (no llega, pasa `GATEWAY_TIMEOUT` = 15 s, o da 5xx / 429), se usa la **última
+    identidad confirmada** de ese token (`GATEWAY_IDENTITY_LAST_KNOWN_TTL`, 24 h); sin
+    ninguna, `503` (reintentable). Antes eso daba `401` y la app cerraba la sesión del
+    conductor en medio de un recorrido cada vez que el Gateway tardaba más de 5 s.
+    Un token rechazado borra su última identidad: un token revocado nunca entra por ahí.
 - ⚠️ Las consultas del GPS al Gateway salen todas desde el mismo servidor y cuentan para
   el límite `throttle:api` del Gateway (60/min). Con la caché alcanza para ~300 usuarios
   distintos cada 5 minutos; si el proyecto crece, hay que subir ese límite en el Gateway.
 
 Configuración en [`config/gateway.php`](../config/gateway.php) (env `GATEWAY_URL`,
-`GATEWAY_USER_PATH`, `GATEWAY_TIMEOUT`, `GATEWAY_IDENTITY_CACHE_TTL`).
+`GATEWAY_USER_PATH`, `GATEWAY_TIMEOUT`, `GATEWAY_IDENTITY_CACHE_TTL`,
+`GATEWAY_IDENTITY_LAST_KNOWN_TTL`).
 
 ---
 

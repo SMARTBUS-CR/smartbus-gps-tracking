@@ -81,10 +81,55 @@ it('has no user when the API Gateway rejects the token, and does not cache the f
     Http::assertSentCount(2);
 });
 
-it('has no user when the API Gateway is unreachable', function () {
-    Http::fake([GATEWAY_USER_URL.'*' => fn () => throw new RuntimeException('auth down')]);
+describe('the API Gateway cannot answer (it is not a rejection)', function () {
+    /** Forgets the 5-minute identity cache, keeping the last known one. */
+    function expireIdentityCache(string $token): void
+    {
+        Cache::forget('gateway_user:'.hash('sha256', $token));
+    }
 
-    withToken('valid-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
+    it('answers 503 (retryable), never 401, when it never confirmed the token', function ($gateway) {
+        Http::fake([GATEWAY_USER_URL.'*' => $gateway]);
+
+        withToken('valid-token')->getJson('/_test/whoami')
+            ->assertStatus(503)
+            ->assertJsonPath('errors.0.status', '503');
+    })->with([
+        'unreachable / timeout' => fn () => fn () => throw new RuntimeException('cURL error 28: timed out'),
+        '5xx' => fn () => Http::response(['message' => 'down'], 502),
+        '429' => fn () => Http::response(['message' => 'slow down'], 429),
+    ]);
+
+    it('uses the last identity confirmed for the token', function () {
+        Http::fakeSequence(GATEWAY_USER_URL.'*')
+            ->push(authServiceUser(USER_ID))
+            ->whenEmpty(fn () => throw new RuntimeException('cURL error 28: timed out'));
+
+        withToken('valid-token')->getJson('/_test/whoami')->assertJsonPath('id', USER_ID);
+        expireIdentityCache('valid-token');
+
+        // The Gateway is slow now: the driver keeps working.
+        withToken('valid-token')->getJson('/_test/whoami')
+            ->assertOk()
+            ->assertExactJson(['id' => USER_ID, 'roles' => ['passenger']]);
+    });
+
+    it('a token the Gateway rejects loses its last identity (a revoked token never gets in)', function () {
+        Http::fakeSequence(GATEWAY_USER_URL.'*')
+            ->push(authServiceUser(USER_ID))
+            ->push(['errors' => []], 401)
+            ->whenEmpty(fn () => throw new RuntimeException('cURL error 28: timed out'));
+
+        withToken('valid-token')->getJson('/_test/whoami')->assertJsonPath('id', USER_ID);
+        expireIdentityCache('valid-token');
+        withToken('valid-token')->getJson('/_test/whoami')->assertExactJson(['id' => null]);
+
+        withToken('valid-token')->getJson('/_test/whoami')->assertStatus(503);
+    });
+
+    it('waits up to 15 s for the Gateway by default', function () {
+        expect(config('gateway.identity.timeout'))->toBe(15);
+    });
 });
 
 it('rejects a user id that is not a UUID', function () {

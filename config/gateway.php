@@ -31,10 +31,17 @@ return [
         // Gateway route that returns the token's user as JSON:API, with its roles.
         'user_path' => env('GATEWAY_USER_PATH', '/api/auth/user?include=roles'),
 
-        'timeout' => (int) env('GATEWAY_TIMEOUT', 5),
+        // Seconds to wait for the Gateway. On Render a request takes ~2–4 s with
+        // spikes; 5 s cut valid checks off, and drivers were signed out.
+        'timeout' => (int) env('GATEWAY_TIMEOUT', 15),
 
         // Seconds a resolved identity is cached per token (only successes are cached).
         'cache_ttl' => (int) env('GATEWAY_IDENTITY_CACHE_TTL', 300),
+
+        // Seconds the LAST identity confirmed for a token is kept, to be used
+        // only when the Gateway cannot answer (slow, down, 5xx / 429). A token
+        // the Gateway rejects is forgotten at once.
+        'last_known_ttl' => (int) env('GATEWAY_IDENTITY_LAST_KNOWN_TTL', 86400),
     ],
 
 ];
