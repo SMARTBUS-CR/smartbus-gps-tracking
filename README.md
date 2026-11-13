@@ -164,6 +164,7 @@ Todas las respuestas y errores siguen **JSON:API** (`application/vnd.api+json`).
 ## Tiempo real
 
 - **Evento:** `BusLocationUpdated` (cada coordenada aceptada, guardada o no) — [docs/EVENTS.md](docs/EVENTS.md).
+- **ETA:** `TripArrivalsUpdated`, calculado por `php artisan gps:eta-watch` en su propio proceso, nunca dentro del POST del conductor — [docs/EVENTS.md](docs/EVENTS.md#triparrivalsupdated).
 - **Iniciar / terminar el viaje lo hace el Dashboard** (`/api/v1/operations/trips/{id}/start | complete`); GPS solo acepta coordenadas mientras el viaje está `in_progress`.
 - Las coordenadas **duplicadas o atrasadas** se ignoran (`202`, `meta.outcome = duplicate | stale`): el bus nunca retrocede en el mapa.
 - **Canal:** `private-trip.{tripId}` — privado ([docs/CHANNELS.md](docs/CHANNELS.md)).
@@ -175,7 +176,9 @@ Todas las respuestas y errores siguen **JSON:API** (`application/vnd.api+json`).
 ## Despliegue en Render (plan gratuito)
 
 Un solo servicio web (Docker): nginx + Laravel + Reverb dentro del mismo contenedor
-(`Dockerfile`, `docker/`). **No hay worker**: el broadcast es síncrono y no hay cálculos de ETA.
+(`Dockerfile`, `docker/`). El broadcast de posiciones es síncrono (sin cola). Los ETA los
+calcula aparte el programa `laravel-eta` (`php artisan gps:eta-watch`), que no frena ni
+tumba el envío de posiciones.
 
 Variables de entorno mínimas:
 
@@ -186,6 +189,7 @@ Variables de entorno mínimas:
 | `GATEWAY_URL` | URL del API Gateway (resuelve el usuario del token) |
 | `BROADCAST_CONNECTION=reverb`, `REVERB_*` | credenciales de Reverb |
 | `CACHE_STORE=database` o `file` | posición actual de cada viaje (si se pierde, se usa la última fila de `gps_locations`) |
+| `ETA_SERVICE_URL`, `DASHBOARD_URL` | opcionales: activan los ETA (vacías = apagado). Ej.: `https://…/api/v1/eta` y `https://smartbus-dashboard-dev.onrender.com` |
 
 Límites del plan gratuito de Render (aceptados para esta etapa):
 - El servicio **se duerme a los 15 min sin tráfico** y tarda **~1 min** en despertar. Con un viaje en
@@ -205,8 +209,12 @@ app/
     TripPosition.php                    posición actual de un viaje
     TripTrackingState.php               estado + posición + antigüedad para el pasajero
     RecordResult.php                    resultado de registrar una lectura
+  Console/Commands/
+    PruneGpsLocations.php               limpieza de lecturas viejas
+    WatchTripArrivals.php               gps:eta-watch (ETA, proceso aparte)
   Events/
     BusLocationUpdated.php              nueva posición en vivo
+    TripArrivalsUpdated.php             ETA a las paradas que faltan
   Http/
     Controllers/Api/GpsLocationController.php
     Middleware/
@@ -224,6 +232,7 @@ app/
     GpsLocationService.php              recibe lecturas: autoriza, ordena, guarda y emite
     TripDriverGuard.php                 ¿es el conductor asignado?
     TripPositionStore.php               posición actual (caché + respaldo en BD)
+    EtaOrchestrationService.php         contexto del Dashboard + servicio ETA + broadcast
   Support/
     Gateway/GatewayUser.php
     JsonApi/JsonApiErrors.php            documentos de error JSON:API
@@ -243,7 +252,7 @@ docs/                                    ← documentación de arquitectura
 | [docs/DATABASE.md](docs/DATABASE.md) | Esquema real de la BD de operaciones |
 | [docs/POSTGIS.md](docs/POSTGIS.md) | Columna `location`, regla lng/lat |
 | [docs/REVERB.md](docs/REVERB.md) | WebSockets, cómo correrlo |
-| [docs/EVENTS.md](docs/EVENTS.md) | `BusLocationUpdated` |
+| [docs/EVENTS.md](docs/EVENTS.md) | `BusLocationUpdated`, `TripArrivalsUpdated` (ETA) |
 | [docs/CHANNELS.md](docs/CHANNELS.md) | Canal privado + autorización sin auth propia |
 | [docs/FLUTTER.md](docs/FLUTTER.md) | Contrato para la app (Echo, payload, reconexión) |
 | [docs/GATEWAY.md](docs/GATEWAY.md) | Contrato con el API Gateway |
@@ -260,9 +269,10 @@ Implementado y con tests (Pest):
 - Lecturas duplicadas o atrasadas ignoradas; posición actual + antigüedad para el pasajero.
 - Eventos en vivo por el canal privado del viaje.
 
-Fuera de alcance por ahora: avance por paradas / distancia sobre el recorrido, ETA,
-revocar suscripciones WebSocket abiertas, worker de colas. Iniciar / terminar el viaje
-y el evento "viaje terminado" son del Dashboard.
+- ETA a las paradas que faltan (`TripArrivalsUpdated`), fuera del POST del conductor.
+
+Fuera de alcance por ahora: revocar suscripciones WebSocket abiertas, worker de colas.
+Iniciar / terminar el viaje y el evento "viaje terminado" son del Dashboard.
 
 ---
 
