@@ -28,7 +28,7 @@ class TripDriverGuard
             ->exists();
 
         if (! $isAssignedDriver) {
-            throw new AuthorizationException('Only the driver assigned to this trip can do this.');
+            throw new AuthorizationException('The authenticated user is not the assigned driver for this trip');
         }
     }
 }
